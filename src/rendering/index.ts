@@ -232,6 +232,7 @@ export * from './renderers/shared/texture/TextureStyle';
 export * from './renderers/shared/texture/TextureUvs';
 export * from './renderers/shared/texture/TextureView';
 export * from './renderers/shared/texture/utils/getCanvasTexture';
+export * from './renderers/shared/texture/utils/getFilterTextureFormat';
 export * from './renderers/shared/texture/utils/getSupportedCompressedTextureFormats';
 export * from './renderers/shared/texture/utils/getSupportedTextureFormats';
 export * from './renderers/shared/texture/utils/getTexelRangeRects';

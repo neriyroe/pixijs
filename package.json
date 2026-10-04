@@ -34,11 +34,11 @@
     "skills"
   ],
   "scripts": {
-    "prepare": "husky install",
     "start": "npm run dev --prefix playground & npm run watch:lib",
     "clean": "rimraf \"{lib,dist}\" .pr_uploads .s3_uploads --glob",
     "build": "node ./scripts/build.mts",
     "build:lib": "node ./scripts/build.mts --lib --dev",
+    "build:types": "tsc -p .configs/tsconfig.types.json --noEmit",
     "build:docs": "npx typedoc --options .configs/typedoc.json && node ./scripts/typedoc/html-to-md.mts && copyfiles -f dist/pixi.min.mjs dist/pixi.min.mjs.map .s3_uploads/docs/",
     "build:status": "node ./scripts/build-status.mjs",
     "dist": "npm run clean && npm run build && npm run build:docs && copyfiles -u 1 \"dist/**/*\" .s3_uploads/",

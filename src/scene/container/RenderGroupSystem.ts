@@ -97,7 +97,7 @@ export class RenderGroupSystem implements System
         (this._renderer as null) = null;
     }
 
-    private _updateCachedRenderGroups(renderGroup: RenderGroup, closestCacheAsTexture: RenderGroup | null): void
+    protected _updateCachedRenderGroups(renderGroup: RenderGroup, closestCacheAsTexture: RenderGroup | null): void
     {
         renderGroup._parentCacheAsTextureRenderGroup = closestCacheAsTexture;
 
@@ -145,6 +145,7 @@ export class RenderGroupSystem implements System
                     resolution,
                     antialias,
                     scaleMode,
+                    format: renderGroup.textureOptions.format,
                 });
 
                 renderGroup.texture = texture;
@@ -167,12 +168,18 @@ export class RenderGroupSystem implements System
         }
     }
 
-    private _updateRenderGroups(renderGroup: RenderGroup): void
+    /** Cache schedulers can own callback cadence while retaining the standard render traversal. */
+    protected runOnRender(renderGroup: RenderGroup): void
+    {
+        renderGroup.runOnRender(this._renderer);
+    }
+
+    protected _updateRenderGroups(renderGroup: RenderGroup): void
     {
         const renderer = this._renderer;
         const renderPipes = renderer.renderPipes;
 
-        renderGroup.runOnRender(renderer);
+        this.runOnRender(renderGroup);
 
         renderGroup.instructionSet.renderPipes = renderPipes;
 
@@ -240,9 +247,9 @@ export class RenderGroupSystem implements System
      * @param renderPipes
      * @deprecated since 8.3.0
      */
-    private _buildInstructions(renderGroup: RenderGroup, renderPipes: RenderPipes): void;
-    private _buildInstructions(renderGroup: RenderGroup, renderer: Renderer): void;
-    private _buildInstructions(renderGroup: RenderGroup, rendererOrPipes: RenderPipes | Renderer): void
+    protected _buildInstructions(renderGroup: RenderGroup, renderPipes: RenderPipes): void;
+    protected _buildInstructions(renderGroup: RenderGroup, renderer: Renderer): void;
+    protected _buildInstructions(renderGroup: RenderGroup, rendererOrPipes: RenderPipes | Renderer): void
     {
     // rebuild the scene graph based on layers...
         const root = renderGroup.root;
@@ -273,4 +280,3 @@ export class RenderGroupSystem implements System
         renderPipes.blendMode.buildEnd(instructionSet);
     }
 }
-

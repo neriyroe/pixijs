@@ -61,9 +61,9 @@ export class GpuMsaaRestore
 
         gpuRenderTarget.msaaBackTextures[index] ??= new TextureSource({
             label: 'msaa-back-texture',
-            width: colorTexture.width,
-            height: colorTexture.height,
-            resolution: colorTexture._resolution,
+            width: colorTexture.pixelWidth,
+            height: colorTexture.pixelHeight,
+            resolution: 1,
             format: gpuRenderTarget.msaaTextures[index].format,
             autoGenerateMipmaps: false,
             // every restore copies into it afresh, so an idle one can be freed and re-created on the next restore

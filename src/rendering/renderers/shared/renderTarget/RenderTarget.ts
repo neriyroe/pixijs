@@ -403,7 +403,9 @@ export class RenderTarget extends EventEmitter<{
      */
     public ensureDepthStencilTexture()
     {
-        this._createDepthStencilTexture(this.sizeSource.width, this.sizeSource.height, this.sizeSource._resolution);
+        // Attachments share physical pixels even when their logical resolution is fractional.
+        this._createDepthStencilTexture(this.sizeSource.pixelWidth, this.sizeSource.pixelHeight, 1);
+        this.depthStencilAttachment.texture.resolution = this.sizeSource._resolution;
 
         this._depth = true;
         this._stencil = true;
@@ -466,11 +468,13 @@ export class RenderTarget extends EventEmitter<{
      */
     private _createDepthStencilTexture(width: number, height: number, resolution: number): PixiDepthStencilAttachment
     {
-        this.depthStencilAttachment ??= {
+        if (this.depthStencilAttachment) return this.depthStencilAttachment;
+
+        this.depthStencilAttachment = {
             texture: new TextureSource({
-                width,
-                height,
-                resolution,
+                width: Math.round(width * resolution),
+                height: Math.round(height * resolution),
+                resolution: 1,
                 format: 'depth24plus-stencil8',
                 autoGenerateMipmaps: false,
                 antialias: false,
@@ -478,6 +482,8 @@ export class RenderTarget extends EventEmitter<{
                 // sampleCount: handled by the render target system..
             }),
         };
+
+        this.depthStencilAttachment.texture.resolution = resolution;
 
         return this.depthStencilAttachment;
     }

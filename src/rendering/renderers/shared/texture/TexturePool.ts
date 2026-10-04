@@ -5,6 +5,7 @@ import { GlobalResourceRegistry } from '../../../../utils/pool/GlobalResourceReg
 import { TextureSource } from './sources/TextureSource';
 import { Texture } from './Texture';
 import { TextureStyle } from './TextureStyle';
+import { getFilterTextureFormat } from './utils/getFilterTextureFormat';
 import { ScreenSizeRegistry } from './utils/ScreenSizeRegistry';
 
 import type { Size } from '../../../../maths/misc/Size';
@@ -343,6 +344,7 @@ export class TexturePoolClass
             height: texture.height,
             resolution: source._resolution,
             antialias,
+            format: getFilterTextureFormat(source.format),
         });
     }
 
@@ -466,9 +468,30 @@ export class TexturePoolClass
     /**
      * Clears the pool.
      * @param destroyTextures - Destroy all stored textures.
+     * @param format - When provided, clear only buckets of this format.
      */
-    public clear(destroyTextures?: boolean): void
+    public clear(destroyTextures?: boolean, format?: TEXTURE_FORMATS): void
     {
+        if (format !== undefined)
+        {
+            const id = formatIds[format];
+
+            if (id === undefined) return;
+
+            for (const [key, textures] of this._buckets)
+            {
+                // The packed size is signed; bit 31 must be removed before decoding the format.
+                const formatKey = Math.floor((key - (key | 0)) / formatBit);
+
+                if (formatKey !== id) continue;
+
+                this._dropTextures(textures, destroyTextures !== false);
+                this._buckets.delete(key);
+            }
+
+            return;
+        }
+
         for (const textures of this._buckets.values())
         {
             this._dropTextures(textures, destroyTextures !== false);

@@ -170,7 +170,7 @@ export class GpuUniformBatchPipe
         }
 
         // TODO make a system that will que up all commands in to one array?
-        this._renderer.gpu.device.queue.submit([commandEncoder.finish()]);
+        this._renderer.encoder.submit([commandEncoder.finish()]);
     }
 
     public destroy()

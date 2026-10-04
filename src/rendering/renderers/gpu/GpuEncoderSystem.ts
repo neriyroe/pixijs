@@ -520,11 +520,20 @@ export class GpuEncoderSystem implements System
     {
         this.finishRenderPass();
 
-        this._gpu.device.queue.submit([this.commandEncoder.finish()]);
+        this.submit([this.commandEncoder.finish()]);
 
         this._resolveCommandFinished();
 
         this.commandEncoder = null;
+    }
+
+    /**
+     * @param commands - The recorded command buffers to submit.
+     * @internal
+     */
+    public submit(commands: GPUCommandBuffer[]): void
+    {
+        this._gpu.device.queue.submit(commands);
     }
 
     private _clearCache()

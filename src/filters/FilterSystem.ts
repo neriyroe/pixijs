@@ -7,6 +7,7 @@ import { Geometry } from '../rendering/renderers/shared/geometry/Geometry';
 import { UniformGroup } from '../rendering/renderers/shared/shader/UniformGroup';
 import { Texture } from '../rendering/renderers/shared/texture/Texture';
 import { TexturePool } from '../rendering/renderers/shared/texture/TexturePool';
+import { getFilterTextureFormat } from '../rendering/renderers/shared/texture/utils/getFilterTextureFormat';
 import { RendererType } from '../rendering/renderers/types';
 import { Bounds } from '../scene/container/bounds/Bounds';
 import { getGlobalRenderableBounds } from '../scene/container/bounds/getRenderableBounds';
@@ -317,6 +318,7 @@ export class FilterSystem implements System
             height: bounds.height,
             resolution: filterData.resolution,
             antialias: filterData.antialias,
+            format: getFilterTextureFormat(colorTextureSource.format),
         });
 
         filterData.backTexture = Texture.EMPTY;
@@ -393,6 +395,7 @@ export class FilterSystem implements System
             width: bounds.width,
             height: bounds.height,
             resolution: backgroundResolution,
+            format: lastRenderSurface.colorTexture.format,
         });
 
         let x = bounds.minX;
@@ -507,6 +510,14 @@ export class FilterSystem implements System
 
     public destroy(): void
     {
+        // The renderer owns these bindings; pooled textures have independent lifetimes.
+        if (this._globalFilterBindGroup.resources) this._globalFilterBindGroup.destroy();
+        this._filterGlobalUniforms.buffer?.destroy();
+        this._filterGlobalUniforms.buffer = undefined;
+
+        this._filterStack.length = 0;
+        this._activeFilterData = null;
+
         this._passthroughFilter?.destroy(true);
         (this._passthroughFilter as null) = null;
     }
@@ -586,6 +597,7 @@ export class FilterSystem implements System
             height: bounds.height,
             resolution: filterData.resolution,
             antialias: filterData.antialias,
+            format: renderer.renderTarget.renderTarget.colorTexture.format,
         });
 
         // Very cryptic, but important(!) moment.
@@ -803,6 +815,7 @@ export class FilterSystem implements System
                 width: bounds.width,
                 height: bounds.height,
                 resolution: flip.source._resolution,
+                format: getFilterTextureFormat(flip.source.format),
             });
 
             // get another texture that we will render the next filter too

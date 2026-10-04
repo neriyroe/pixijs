@@ -110,6 +110,16 @@ npm install --save-dev @types/web
 }
 ```
 
+### Fork development
+
+This fork preserves the upstream package name and version. Its renderer extensions support HDR filter/cache textures, mixed-format attachments, physical depth/MSAA sizes, submission profiling, and explicit texture/binding cleanup.
+
+```bash
+npm ci --ignore-scripts --workspaces=false
+npm run build -- --dev
+npm run build:types
+```
+
 ### Contribute
 
 Want to be part of the PixiJS project? Great! All are welcome! We will get there quicker

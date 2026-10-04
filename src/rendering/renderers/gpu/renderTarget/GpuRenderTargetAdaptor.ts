@@ -149,7 +149,7 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
 
         if (standAlone)
         {
-            renderer.gpu.device.queue.submit([commandEncoder.finish()]);
+            renderer.encoder.submit([commandEncoder.finish()]);
         }
     }
 
@@ -575,7 +575,7 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
 
             const gpuCommands = commandEncoder.finish();
 
-            device.queue.submit([gpuCommands]);
+            encoder.submit([gpuCommands]);
         }
         else
         {
@@ -605,24 +605,10 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
                     'webgpu'
                 ) as unknown as GPUCanvasContext;
 
-                const alphaMode = colorTexture.transparent ? 'premultiplied' : 'opaque';
-                const canvasFormat = getCanvasContextFormat(colorTexture.format);
-
                 // configured every time, as a device replaced after a loss needs it configured again
                 try
                 {
-                    context.configure({
-                        device: this._renderer.gpu.device,
-                        usage: GPUTextureUsage.TEXTURE_BINDING
-                            | GPUTextureUsage.COPY_DST
-                            | GPUTextureUsage.RENDER_ATTACHMENT
-                            | GPUTextureUsage.COPY_SRC,
-                        format: canvasFormat,
-                        alphaMode,
-                        ...(canvasFormat === 'rgba16float'
-                            ? { toneMapping: { mode: 'extended' } }
-                            : {}),
-                    });
+                    context.configure(this.getCanvasConfiguration(colorTexture));
                 }
                 catch (e)
                 {
@@ -661,6 +647,23 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
         }
 
         return gpuRenderTarget;
+    }
+
+    /** Renderer adapters provide display colour policy without replacing canvas ownership. */
+    protected getCanvasConfiguration(colorTexture: CanvasSource): GPUCanvasConfiguration
+    {
+        const canvasFormat = getCanvasContextFormat(colorTexture.format);
+
+        return {
+            device: this._renderer.gpu.device,
+            usage: GPUTextureUsage.TEXTURE_BINDING
+                | GPUTextureUsage.COPY_DST
+                | GPUTextureUsage.RENDER_ATTACHMENT
+                | GPUTextureUsage.COPY_SRC,
+            format: canvasFormat,
+            alphaMode: colorTexture.transparent ? 'premultiplied' : 'opaque',
+            ...(canvasFormat === 'rgba16float' ? { toneMapping: { mode: 'extended' } } : {}),
+        };
     }
 
     /**
@@ -721,9 +724,9 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
             {
                 const colorTexture = colorAttachment.texture;
 
-                gpuRenderTarget.msaaTextures[i]?.resize(colorTexture.width, colorTexture.height, colorTexture._resolution);
+                gpuRenderTarget.msaaTextures[i]?.resize(colorTexture.pixelWidth, colorTexture.pixelHeight, 1);
                 gpuRenderTarget.msaaBackTextures[i]?.resize(
-                    colorTexture.width, colorTexture.height, colorTexture._resolution
+                    colorTexture.pixelWidth, colorTexture.pixelHeight, 1
                 );
             });
         }

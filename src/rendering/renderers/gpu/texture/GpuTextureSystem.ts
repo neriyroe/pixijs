@@ -454,7 +454,7 @@ export class GpuTextureSystem implements System, CanvasGenerator
             height: canvas.height,
         });
 
-        renderer.gpu.device.queue.submit([commandEncoder.finish()]);
+        renderer.encoder.submit([commandEncoder.finish()]);
 
         return canvas;
     }

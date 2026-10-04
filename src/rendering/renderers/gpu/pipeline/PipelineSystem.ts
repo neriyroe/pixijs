@@ -100,18 +100,11 @@ function getGraphicsStateKey(
     + topology;
 }
 
-// Module-local interner for color attachment formats. Realistic apps will populate
-// 1-3 entries ever (default render-target format + maybe rgba16float for HDR), so the
-// id stays small and fits comfortably in a few bits of the global cache key.
-//
-// Trade-off: only the first attachment's format is encoded. Mixed-format MRT (where
-// different attachments use different formats) would alias the same cache slot. The
-// failure mode is a clean WebGPU validation error at setPipeline time, not silent
-// corruption, so it surfaces immediately if anyone hits it.
+// Single formats and ordered MRT format tuples share one cache-key interner.
 const colorFormatIds: Record<string, number> = Object.create(null);
 let nextColorFormatId = 0;
 
-function getColorFormatId(format: GPUTextureFormat): number
+function getColorFormatId(format: string): number
 {
     let id = colorFormatIds[format];
 
@@ -126,8 +119,8 @@ function getColorFormatId(format: GPUTextureFormat): number
 // stencilState = 8;         // bits 6-8   // 8 states // value 0-7;
 // colorMask = 16;           // bits 9-12  // 16 states // value 0-15;
 // depthStencilFormat = 7;   // bits 13-15 // 8 states // value 0-7;
-// colorFormatId = 16;       // bits 16-19 // 16 interned color attachment formats
-// invertFrontFace = 1;      // bit 20     // 2 states // value 0-1 (flipY winding inversion)
+// invertFrontFace = 1;      // bit 16     // 2 states // value 0-1 (flipY winding inversion)
+// colorFormatId = n;        // bits 17+   // interned attachment format tuples
 function getGlobalStateKey(
     stencilStateId: number,
     multiSampleCount: number,
@@ -139,14 +132,14 @@ function getGlobalStateKey(
     invertFrontFace: number,
 ): number
 {
-    return (invertFrontFace << 20) // 1 bit for invertFrontFace (flipY winding inversion)
-         | (colorFormatId << 16) // 4 bits for colorFormatId
-         | (depthStencilFormat << 13) // 3 bits for depthStencilFormat
-         | (colorMask << 9) // 4 bits for colorMask
-         | (stencilStateId << 6) // 3 bits for stencilStateId
-         | (depthReadOnly << 5) // 1 bit for depthReadOnly (read-only depth passes can't emit depth writes)
-         | (colorTargetCount << 1) // 4 bits for colorTargetCount (0-8, WebGPU's maxColorAttachments)
-         | multiSampleCount; // 1 bit for multiSampleCount at the least significant position
+    return (colorFormatId * 131072)
+         + (invertFrontFace << 16)
+         + (depthStencilFormat << 13) // 3 bits for depthStencilFormat
+         + (colorMask << 9) // 4 bits for colorMask
+         + (stencilStateId << 6) // 3 bits for stencilStateId
+         + (depthReadOnly << 5) // 1 bit for depthReadOnly (read-only depth passes can't emit depth writes)
+         + (colorTargetCount << 1) // 4 bits for colorTargetCount (0-8, WebGPU's maxColorAttachments)
+         + multiSampleCount; // 1 bit for multiSampleCount at the least significant position
 }
 
 // The state a render bundle bakes into itself at record time, packed into one int. Deliberately
@@ -171,16 +164,13 @@ function getBundleStateKey(
     colorFormatId: number,
 ): number
 {
-    // colorFormatId takes the open top of the key: a format id is only minted per distinct
-    // attachment format ever seen (realistically 1-3), so it cannot approach the 32-bit
-    // boundary these bitwise ops work in
-    return (colorFormatId << 11)
-         | (invertFrontFace << 10)
-         | (stencilReadOnly << 9)
-         | (depthReadOnly << 8)
-         | (depthStencilFormat << 5)
-         | (colorTargetCount << 1)
-         | multiSampleCount;
+    return (colorFormatId * 2048)
+         + (invertFrontFace << 10)
+         + (stencilReadOnly << 9)
+         + (depthReadOnly << 8)
+         + (depthStencilFormat << 5)
+         + (colorTargetCount << 1)
+         + multiSampleCount;
 }
 
 // a Map, not a plain object: the combined graphics key exceeds 2^31, and big numeric
@@ -232,6 +222,7 @@ export class PipelineSystem implements System
     private _multisampleCount = 1;
     private _colorTargetCount = 1;
     private _colorFormat: GPUTextureFormat = 'bgra8unorm';
+    private _colorFormats: GPUTextureFormat[];
     private _colorFormatId = getColorFormatId('bgra8unorm');
     private _depthStencilFormat: GPUTextureFormat = 'depth24plus-stencil8';
     private _depthStencilFormatData = emptyDepthStencilFormatData;
@@ -273,7 +264,24 @@ export class PipelineSystem implements System
         this._multisampleCount = colorTexture?.source.antialias ? 4 : 1;
         this._colorTargetCount = renderTarget.colorAttachments.length;
         this._colorFormat = colorTexture?.format ?? 'bgra8unorm';
-        this._colorFormatId = getColorFormatId(this._colorFormat);
+        let formatKey: string = this._colorFormat;
+
+        if (this._colorTargetCount > 1)
+        {
+            const formats = this._colorFormats ??= [];
+
+            formats.length = this._colorTargetCount;
+            formats[0] = this._colorFormat;
+
+            for (let i = 1; i < this._colorTargetCount; i++)
+            {
+                formats[i] = renderTarget.colorAttachments[i].texture.format;
+                formatKey += `|${formats[i]}`;
+            }
+        }
+
+        this._colorFormatId = getColorFormatId(formatKey);
+
         // the adaptor ensures a depth/stencil request has materialised its texture before
         // calling this (GpuRenderTargetAdaptor.startRenderPass), so the attachment is the truth
         this._depthStencilFormat = renderTarget.depthStencilAttachment?.texture.format;
@@ -356,7 +364,7 @@ export class PipelineSystem implements System
 
         for (let i = 0; i < this._colorTargetCount; i++)
         {
-            colorFormats.push(this._colorFormat);
+            colorFormats.push(this._colorTargetCount > 1 ? this._colorFormats[i] : this._colorFormat);
         }
 
         const descriptor: GPURenderBundleEncoderDescriptor = {
@@ -484,6 +492,7 @@ export class PipelineSystem implements System
         for (let i = 0; i < blendModes.length; i++)
         {
             blendModes[i].writeMask = writeMask;
+            if (this._colorTargetCount > 1) blendModes[i].format = this._colorFormats[i];
         }
 
         const layout = this._renderer.shader.getProgramData(program).pipeline;

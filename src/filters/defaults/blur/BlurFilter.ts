@@ -270,6 +270,14 @@ export class BlurFilter extends Filter
         }
     }
 
+    /** Releases both owned passes before their borrowed renderer resources are retired. */
+    public override destroy(destroyPrograms = false): void
+    {
+        this.blurXFilter.destroy(destroyPrograms);
+        this.blurYFilter.destroy(destroyPrograms);
+        super.destroy(destroyPrograms);
+    }
+
     /**
      * Sets the strength of both the blurX and blurY properties simultaneously.
      * Controls the overall intensity of the Gaussian blur effect.
