@@ -35,7 +35,7 @@ async function main()
     await parallel(step1);
 
     // Step 2: rollup (+ types chain for non-lib or dev mode)
-    const rollupEnv = isLib ? { LIB_ONLY: '1' } : {};
+    const rollupEnv = { ...(isLib ? { LIB_ONLY: '1' } : {}), NODE_ENV: isDev ? 'development' : 'production' };
     const rollup = spawn('rollup', ['-c', '.configs/rollup.config.mjs', '--failAfterWarnings'], {
         signal,
         env: rollupEnv,

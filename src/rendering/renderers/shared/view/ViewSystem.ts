@@ -211,7 +211,7 @@ export class ViewSystem implements System<ViewSystemOptions, TypeOrBool<ViewSyst
         // renderer.resize - ends in the source resizing, so this is the one place to hook the pools
         this.texture.source.on('resize', this._updateScreenSize, this);
 
-        this.resolution = options.resolution;
+        this.resize(options.width, options.height, options.resolution);
 
         this._updateScreenSize();
     }
@@ -224,7 +224,10 @@ export class ViewSystem implements System<ViewSystemOptions, TypeOrBool<ViewSyst
      */
     public resize(desiredScreenWidth: number, desiredScreenHeight: number, resolution: number): void
     {
-        this.texture.source.resize(desiredScreenWidth, desiredScreenHeight, resolution);
+        const resized = this.texture.source.resize(desiredScreenWidth, desiredScreenHeight, resolution);
+
+        // A density-only change keeps drawable pixels but changes the texture's logical frame.
+        if (!resized) this.texture.update();
 
         this.screen.width = this.texture.frame.width;
         this.screen.height = this.texture.frame.height;

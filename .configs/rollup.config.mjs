@@ -71,7 +71,7 @@ async function main()
 
     const plugins = [
         webworker(),
-        jscc({ values: { _VERSION: repo.version, _DEBUG: true } }),
+        jscc({ values: { _VERSION: repo.version, _DEBUG: process.env.NODE_ENV !== 'production' } }),
         esbuild({ target: moduleTarget, exclude: ['**/__tests__/**'] }),
         ...commonPlugins
     ];
