@@ -6,10 +6,10 @@ export class UboBatch
 
     public byteIndex = 0;
 
-    constructor({ minUniformOffsetAlignment }: {minUniformOffsetAlignment: number})
+    constructor({ minUniformOffsetAlignment, capacity = 65535 }: {minUniformOffsetAlignment: number; capacity?: number})
     {
         this._minUniformOffsetAlignment = minUniformOffsetAlignment;
-        this.data = new Float32Array(65535);
+        this.data = new Float32Array(capacity);
     }
 
     public clear(): void

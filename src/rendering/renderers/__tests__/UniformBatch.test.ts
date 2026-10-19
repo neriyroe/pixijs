@@ -21,18 +21,18 @@ describe('UniformBatch', () =>
 
         const bufferResource = uniformBatchPipe.getArrayBufferResource(new Float32Array(32));
 
-        expect(bufferResource.buffer).toBe(uniformBatchPipe['_buffers'][0]);
+        expect(bufferResource.buffer).toBe(uniformBatchPipe['_buffer']);
         expect(bufferResource.offset).toBe(0);
 
         const bufferResource2 = uniformBatchPipe.getArrayBufferResource(new Float32Array(32));
 
-        expect(bufferResource2.buffer).toBe(uniformBatchPipe['_buffers'][1]);
-        expect(bufferResource2.offset).toBe(0);
+        expect(bufferResource2.buffer).toBe(bufferResource.buffer);
+        expect(bufferResource2.offset).toBe(256);
 
         const bufferResource3 = uniformBatchPipe.getArrayBufferResource(new Float32Array(32));
 
-        expect(bufferResource3.buffer).toBe(uniformBatchPipe['_buffers'][0]);
-        expect(bufferResource3.offset).toBe(256);
+        expect(bufferResource3.buffer).toBe(bufferResource.buffer);
+        expect(bufferResource3.offset).toBe(512);
 
         scheduler.destroy();
     });

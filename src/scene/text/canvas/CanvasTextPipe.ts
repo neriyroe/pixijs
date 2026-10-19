@@ -72,6 +72,15 @@ export class CanvasTextPipe implements RenderPipe<Text>
 
     public addRenderable(text: Text, instructionSet: InstructionSet)
     {
+        const batchableText = this.prepareRenderable(text);
+
+        text._didTextUpdate = false;
+        this._renderer.renderPipes.batch.addToBatch(batchableText, instructionSet);
+    }
+
+    /** Prepares text textures and bounds without attaching them to a render batch. */
+    public prepareRenderable(text: Text): BatchableText
+    {
         const batchableText = this._getGpuText(text);
 
         // also update when this renderer has no texture for the text yet, e.g. the text was first rendered elsewhere
@@ -85,12 +94,13 @@ export class CanvasTextPipe implements RenderPipe<Text>
                 this._updateGpuText(text);
             }
 
-            text._didTextUpdate = false;
+            // The next render still validates any batch using the prepared texture.
+            text._didTextUpdate = true;
 
             updateTextBounds(batchableText, text);
         }
 
-        this._renderer.renderPipes.batch.addToBatch(batchableText, instructionSet);
+        return batchableText;
     }
 
     public updateRenderable(text: Text)

@@ -326,6 +326,8 @@ export abstract class Batcher
     /** Indicates whether the batch data has been modified and needs updating. */
     public dirty = true;
 
+    private _comparisonBuffer: ViewableBuffer;
+
     /** The current index of the batch being processed. */
     public batchIndex = 0;
 
@@ -453,11 +455,24 @@ export abstract class Batcher
         return true;
     }
 
-    public updateElement(batchableObject: BatchableElement)
+    /** Packs current attributes, optionally retaining the buffer when the packed bytes match. */
+    public updateElement(batchableObject: BatchableElement, skipUnchanged = false): boolean
     {
-        this.dirty = true;
+        const length = batchableObject.attributeSize * this.vertexSize;
+        let attributeBuffer = this.attributeBuffer;
+        let index = batchableObject._attributeStart;
 
-        const attributeBuffer = this.attributeBuffer;
+        if (skipUnchanged)
+        {
+            if (!this._comparisonBuffer || this._comparisonBuffer.size < length * 4)
+            {
+                this._comparisonBuffer?.destroy();
+                this._comparisonBuffer = new ViewableBuffer(length * 4);
+            }
+
+            attributeBuffer = this._comparisonBuffer;
+            index = 0;
+        }
 
         if (batchableObject.packAsQuad)
         {
@@ -465,7 +480,7 @@ export abstract class Batcher
                 batchableObject as BatchableQuadElement,
                 attributeBuffer.float32View,
                 attributeBuffer.uint32View,
-                batchableObject._attributeStart, batchableObject._textureId);
+                index, batchableObject._textureId);
         }
         else
         {
@@ -473,8 +488,33 @@ export abstract class Batcher
                 batchableObject as BatchableMeshElement,
                 attributeBuffer.float32View,
                 attributeBuffer.uint32View,
-                batchableObject._attributeStart, batchableObject._textureId);
+                index, batchableObject._textureId);
         }
+
+        if (skipUnchanged)
+        {
+            const packed = attributeBuffer.uint32View;
+            const destination = this.attributeBuffer.uint32View;
+            const offset = batchableObject._attributeStart;
+            let changed = false;
+
+            for (let i = 0; i < length; i++)
+            {
+                if (packed[i] !== destination[offset + i])
+                {
+                    changed = true;
+                    break;
+                }
+            }
+
+            if (!changed) return false;
+
+            for (let i = 0; i < length; i++) destination[offset + i] = packed[i];
+        }
+
+        this.dirty = true;
+
+        return true;
     }
 
     /**
@@ -822,5 +862,7 @@ export abstract class Batcher
 
         this.attributeBuffer.destroy();
         this.attributeBuffer = null;
+        this._comparisonBuffer?.destroy();
+        this._comparisonBuffer = null;
     }
 }

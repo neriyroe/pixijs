@@ -22,6 +22,9 @@ export abstract class PrepareUpload extends PrepareQueue
      */
     protected uploadQueueItem(item: PrepareQueueItem): void
     {
+        // A detached screen can retire while its uploads are still queued.
+        if (item.destroyed) return;
+
         if (item instanceof TextureSource)
         {
             this.uploadTextureSource(item);
@@ -51,7 +54,7 @@ export abstract class PrepareUpload extends PrepareQueue
 
     protected uploadText(_text: Text): void
     {
-        this.renderer.renderPipes.text.initGpuText(_text);
+        this.renderer.renderPipes.text.prepareRenderable(_text);
     }
 
     protected uploadBitmapText(_text: BitmapText): void

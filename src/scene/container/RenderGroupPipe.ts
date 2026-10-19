@@ -122,8 +122,12 @@ export class RenderGroupPipe implements InstructionPipe<RenderGroup>
             this._renderer.globalUniforms.pop();
         }
 
-        renderGroup._batchableRenderGroup._batcher.updateElement(renderGroup._batchableRenderGroup);
-        renderGroup._batchableRenderGroup._batcher.geometry.buffers[0].update();
+        const sprite = renderGroup._batchableRenderGroup;
+
+        if (sprite._batcher.updateElement(sprite, true))
+        {
+            sprite._batcher.geometry.buffers[0].update();
+        }
     }
 
     private _executeDirect(renderGroup: RenderGroup): void

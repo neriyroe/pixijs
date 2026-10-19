@@ -33,6 +33,9 @@ export abstract class PrepareBase
     /** The number of uploads to process per frame */
     public static uploadsPerFrame = 4;
 
+    /** The upload budget owned by this renderer. */
+    public uploadsPerFrame = PrepareBase.uploadsPerFrame;
+
     /** Reference to the renderer */
     protected renderer: Renderer;
 
@@ -163,8 +166,13 @@ export abstract class PrepareBase
 
     public destroy(): void
     {
+        if (this._destroyed) return;
+
         this._destroyed = true;
         clearTimeout(this.timeout);
+        Ticker.system.remove(this._tick, this);
+        this.queue.length = 0;
+        this._resolve();
     }
 
     /** called per frame by the ticker, defer processing to next tick */
@@ -184,7 +192,7 @@ export abstract class PrepareBase
         let itemsProcessed = 0;
 
         // process the maximum number of items per frame
-        while (queue.length && itemsProcessed < PrepareBase.uploadsPerFrame)
+        while (queue.length && itemsProcessed < this.uploadsPerFrame)
         {
             const queueItem = queue.shift();
 

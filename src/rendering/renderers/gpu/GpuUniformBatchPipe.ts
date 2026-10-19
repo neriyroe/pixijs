@@ -8,7 +8,7 @@ import { BindGroup } from './shader/BindGroup';
 import type { UniformGroup } from '../shared/shader/UniformGroup';
 import type { WebGPURenderer } from './WebGPURenderer';
 
-const minUniformOffsetAlignment = 128;// 256 / 2;
+const minUniformOffsetAlignment = 256;
 
 /** @internal */
 export class GpuUniformBatchPipe
@@ -26,8 +26,7 @@ export class GpuUniformBatchPipe
     private _bindGroupHash: Record<number, BindGroup> = Object.create(null);
     private readonly _batchBuffer: UboBatch;
 
-    // number of buffers..
-    private _buffers: Buffer[] = [];
+    private readonly _buffer: Buffer;
 
     private _bindGroups: BindGroup[] = [];
     private _bufferResources: BufferResource[] = [];
@@ -36,27 +35,24 @@ export class GpuUniformBatchPipe
     {
         this._renderer = renderer;
 
-        this._batchBuffer = new UboBatch({ minUniformOffsetAlignment });
-
-        const totalBuffers = (256 / minUniformOffsetAlignment);
-
-        for (let i = 0; i < totalBuffers; i++)
-        {
-            let usage = BufferUsage.UNIFORM | BufferUsage.COPY_DST;
-
-            if (i === 0) usage |= BufferUsage.COPY_SRC;
-
-            this._buffers.push(new Buffer({
-                data: this._batchBuffer.data,
-                usage
-            }));
-        }
+        // Aligned records share one upload; shifted copies require another queue submission.
+        this._batchBuffer = new UboBatch({ minUniformOffsetAlignment, capacity: 65535 * 2 });
+        this._buffer = new Buffer({
+            data: this._batchBuffer.data,
+            usage: BufferUsage.UNIFORM | BufferUsage.COPY_DST,
+        });
     }
 
     public renderEnd()
     {
-        this._uploadBindGroups();
-        this._resetBindGroups();
+        try
+        {
+            this._uploadBindGroups();
+        }
+        finally
+        {
+            this._resetBindGroups();
+        }
     }
 
     private _resetBindGroups()
@@ -117,11 +113,9 @@ export class GpuUniformBatchPipe
     {
         if (!this._bufferResources[index])
         {
-            const buffer = this._buffers[index % 2];
-
             this._bufferResources[index] = new BufferResource({
-                buffer,
-                offset: ((index / 2) | 0) * 256,
+                buffer: this._buffer,
+                offset: index * minUniformOffsetAlignment,
                 size: minUniformOffsetAlignment
             });
         }
@@ -146,31 +140,10 @@ export class GpuUniformBatchPipe
 
     private _uploadBindGroups()
     {
-        const bufferSystem = this._renderer.buffer;
+        if (!this._batchBuffer.byteIndex) return;
 
-        const firstBuffer = this._buffers[0];
-
-        firstBuffer.update(this._batchBuffer.byteIndex);
-
-        bufferSystem.updateBuffer(firstBuffer);
-
-        const commandEncoder = this._renderer.gpu.device.createCommandEncoder();
-
-        for (let i = 1; i < this._buffers.length; i++)
-        {
-            const buffer = this._buffers[i];
-
-            commandEncoder.copyBufferToBuffer(
-                bufferSystem.getGPUBuffer(firstBuffer),
-                minUniformOffsetAlignment,
-                bufferSystem.getGPUBuffer(buffer),
-                0,
-                this._batchBuffer.byteIndex
-            );
-        }
-
-        // TODO make a system that will que up all commands in to one array?
-        this._renderer.encoder.submit([commandEncoder.finish()]);
+        this._buffer.update(this._batchBuffer.byteIndex);
+        this._renderer.buffer.updateBuffer(this._buffer);
     }
 
     public destroy()
@@ -183,11 +156,7 @@ export class GpuUniformBatchPipe
         this._bindGroups = null;
         this._bindGroupHash = null;
 
-        for (let i = 0; i < this._buffers.length; i++)
-        {
-            this._buffers[i].destroy();
-        }
-        this._buffers = null;
+        this._buffer.destroy();
 
         for (let i = 0; i < this._bufferResources.length; i++)
         {
