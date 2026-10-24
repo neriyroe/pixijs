@@ -24,6 +24,68 @@ interface BoundBindGroupSlot
     key: string;
 }
 
+type PassState = Pick<GPURenderPassEncoder, 'setViewport' | 'setScissorRect' | 'setStencilReference'>;
+
+/** The pass-level state a deferred pass is given before it begins, replayed onto the pass once it does. @internal */
+class DeferredPassState implements PassState
+{
+    private readonly _viewport = new Float64Array(6);
+    private readonly _scissor = new Float64Array(4);
+    private _stencilReference = 0;
+    private _hasViewport = false;
+    private _hasScissor = false;
+    private _hasStencilReference = false;
+
+    public setViewport(x: number, y: number, width: number, height: number, minDepth: number, maxDepth: number): void
+    {
+        const viewport = this._viewport;
+
+        viewport[0] = x;
+        viewport[1] = y;
+        viewport[2] = width;
+        viewport[3] = height;
+        viewport[4] = minDepth;
+        viewport[5] = maxDepth;
+        this._hasViewport = true;
+    }
+
+    public setScissorRect(x: number, y: number, width: number, height: number): void
+    {
+        const scissor = this._scissor;
+
+        scissor[0] = x;
+        scissor[1] = y;
+        scissor[2] = width;
+        scissor[3] = height;
+        this._hasScissor = true;
+    }
+
+    public setStencilReference(reference: number): void
+    {
+        this._stencilReference = reference;
+        this._hasStencilReference = true;
+    }
+
+    public replay(pass: GPURenderPassEncoder): void
+    {
+        const viewport = this._viewport;
+        const scissor = this._scissor;
+
+        if (this._hasViewport)
+        {
+            pass.setViewport(viewport[0], viewport[1], viewport[2], viewport[3], viewport[4], viewport[5]);
+        }
+
+        if (this._hasScissor) pass.setScissorRect(scissor[0], scissor[1], scissor[2], scissor[3]);
+        if (this._hasStencilReference) pass.setStencilReference(this._stencilReference);
+    }
+
+    public reset(): void
+    {
+        this._hasViewport = this._hasScissor = this._hasStencilReference = false;
+    }
+}
+
 /**
  * The system that handles encoding commands for the GPU.
  * @category rendering
@@ -39,15 +101,6 @@ export class GpuEncoderSystem implements System
     } as const;
 
     public commandEncoder: GPUCommandEncoder;
-    /**
-     * The active command target that draws and state are recorded into. This is the live render
-     * pass during normal rendering, or a {@link GPURenderBundleEncoder} while a render bundle is
-     * being recorded (see {@link beginBundle}). Both encoders expose the same render/bind command
-     * API the encoder relies on (`GPURenderCommandsMixin` + `GPUBindingCommandsMixin`),
-     * so callers write to it without caring which one is active. Pass-level commands (viewport,
-     * stencil, executeBundles, end) are not part of that shared API and go through the private pass encoder.
-     */
-    public renderPassEncoder: GPURenderPassEncoder | GPURenderBundleEncoder;
     public commandFinished: Promise<void>;
 
     private _resolveCommandFinished: (value: void) => void;
@@ -68,7 +121,12 @@ export class GpuEncoderSystem implements System
      * a bundle encoder, so pass-level commands (viewport, stencil, executeBundles, end) always have
      * a correctly typed target — even while a bundle is being recorded.
      */
-    private _passEncoder: GPURenderPassEncoder;
+    private _passEncoder: GPURenderPassEncoder = null;
+    /** What {@link renderPassEncoder} returns while a pass is open: the pass, or a bundle encoder recording into it. */
+    private _commands: GPURenderPassEncoder | GPURenderBundleEncoder = null;
+    /** The target whose pass waits for its first command; it only loads and stores, so it may never begin. */
+    private _deferred: GpuRenderTarget = null;
+    private readonly _deferredState = new DeferredPassState();
     /**
      * {@link PipelineSystem.bundleStateKey} as it was when {@link beginBundle} built the bundle
      * encoder's descriptor, ready to stamp onto the {@link RenderBundle} that {@link endBundle}
@@ -89,6 +147,31 @@ export class GpuEncoderSystem implements System
         {
             this._boundBindGroup[i] = { bindGroup: null, program: null, key: null };
         }
+    }
+
+    /**
+     * The active command target that draws and state are recorded into. This is the live render
+     * pass during normal rendering, or a {@link GPURenderBundleEncoder} while a render bundle is
+     * being recorded (see {@link beginBundle}). Both encoders expose the same render/bind command
+     * API the encoder relies on (`GPURenderCommandsMixin` + `GPUBindingCommandsMixin`),
+     * so callers write to it without caring which one is active. Pass-level commands (viewport,
+     * stencil, executeBundles, end) are not part of that shared API and go through the private pass encoder.
+     * Reading it begins a pass deferred to its first command (see {@link deferRenderPass}).
+     */
+    public get renderPassEncoder(): GPURenderPassEncoder | GPURenderBundleEncoder
+    {
+        return this._commands ?? this._openDeferred();
+    }
+
+    public set renderPassEncoder(encoder: GPURenderPassEncoder | GPURenderBundleEncoder)
+    {
+        this._commands = encoder;
+    }
+
+    /** Whether a pass is bound, begun or deferred to its first command. */
+    public get hasRenderPass(): boolean
+    {
+        return !!(this._passEncoder || this._deferred);
     }
 
     public renderStart(): void
@@ -120,6 +203,16 @@ export class GpuEncoderSystem implements System
         return this._passEncoder;
     }
 
+    // Ends any open pass and binds the target's, to begin at the first command that needs it. Its descriptor must only
+    // load and store, as a pass nothing draws in is then dropped.
+    public deferRenderPass(gpuRenderTarget: GpuRenderTarget): void
+    {
+        this.endRenderPass();
+        this._clearCache();
+        this._deferredState.reset();
+        this._deferred = gpuRenderTarget;
+    }
+
     public endRenderPass()
     {
         if (this._passEncoder)
@@ -129,6 +222,7 @@ export class GpuEncoderSystem implements System
 
         this.renderPassEncoder = null;
         this._passEncoder = null;
+        this._deferred = null;
     }
 
     /**
@@ -146,7 +240,7 @@ export class GpuEncoderSystem implements System
     {
         // While a bundle is recording, renderPassEncoder is swapped to the bundle encoder and no
         // longer matches the real pass. Equal references therefore mean no bundle is active.
-        if (this._passEncoder !== this.renderPassEncoder)
+        if (this._passEncoder !== this._commands)
         {
             throw new Error('Cannot begin a new render bundle while one is already being recorded.');
         }
@@ -174,7 +268,7 @@ export class GpuEncoderSystem implements System
      */
     public endBundle(): RenderBundle
     {
-        const encoder = this.renderPassEncoder;
+        const encoder = this._commands;
 
         // `finish` only exists on a bundle encoder, so it both narrows the type for the call below
         // and guards against endBundle being called without an active bundle.
@@ -243,8 +337,10 @@ export class GpuEncoderSystem implements System
             gpuBundles[0] = this._getGpuBundle(bundle);
         }
 
+        const pass = this._passEncoder ?? this._openDeferred();
+
         this._clearCache();
-        this._passEncoder.executeBundles(gpuBundles);
+        pass.executeBundles(gpuBundles);
     }
 
     /**
@@ -270,7 +366,13 @@ export class GpuEncoderSystem implements System
 
     public setViewport(viewport: Rectangle): void
     {
-        this._passEncoder.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+        this._passState.setViewport(viewport.x, viewport.y, viewport.width, viewport.height, 0, 1);
+    }
+
+    /** Clips the pass's draws to `rect`, in pixels; pass-level state, so it targets the real pass, never a bundle. */
+    public setScissorRect(rect: Rectangle): void
+    {
+        this._passState.setScissorRect(rect.x, rect.y, rect.width, rect.height);
     }
 
     /**
@@ -280,7 +382,26 @@ export class GpuEncoderSystem implements System
      */
     public setStencilReference(stencilReference: number): void
     {
-        this._passEncoder.setStencilReference(stencilReference);
+        this._passState.setStencilReference(stencilReference);
+    }
+
+    /** Where pass-level state goes: the open pass, or the record a deferred pass replays when it begins. */
+    private get _passState(): PassState
+    {
+        return this._passEncoder ?? this._deferredState;
+    }
+
+    // Begins the deferred pass, giving it the pass-level state set while it waited; null when no pass is bound.
+    private _openDeferred(): GPURenderPassEncoder
+    {
+        const deferred = this._deferred;
+
+        if (!deferred) return null;
+
+        this.beginRenderPass(deferred);
+        this._deferredState.replay(this._passEncoder);
+
+        return this._passEncoder;
     }
 
     public setPipelineFromGeometryProgramAndState(
@@ -508,6 +629,8 @@ export class GpuEncoderSystem implements System
 
     public finishRenderPass()
     {
+        this._deferred = null;
+
         if (this._passEncoder)
         {
             this._passEncoder.end();
@@ -562,6 +685,7 @@ export class GpuEncoderSystem implements System
         this._boundPipeline = null;
         this.renderPassEncoder = null;
         this._passEncoder = null;
+        this._deferred = null;
     }
 
     protected contextChange(gpu: GPU): void

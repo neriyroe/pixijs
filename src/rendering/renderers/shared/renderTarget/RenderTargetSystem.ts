@@ -818,6 +818,14 @@ export class RenderTargetSystem<RENDER_TARGET extends RendererRenderTarget> impl
         return renderTarget;
     }
 
+    /** Binds `options` in place of the top of the stack, so the binding beneath is not restored on the way. */
+    public replace(options: BindOptions): RenderTarget
+    {
+        this._renderTargetStack.pop();
+
+        return this.push(options);
+    }
+
     /**
      * Pops the current render target and restores the previous binding.
      * @returns the render target that was restored

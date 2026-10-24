@@ -74,6 +74,8 @@ export class RenderGroupSystem implements System
             worldColor: container.renderGroup.worldColorAlpha,
         });
 
+        renderPipes.renderGroup.renderCacheTextures(container.renderGroup);
+
         executeInstructions(container.renderGroup, renderPipes);
 
         // TODO need to add some events / runners for things like this to hook up to
@@ -119,7 +121,7 @@ export class RenderGroupSystem implements System
 
         if (renderGroup.isCachedAsTexture)
         {
-            if (renderGroup.textureNeedsUpdate)
+            if (renderGroup.textureNeedsMeasure)
             {
                 // lets get the texture ready for rendering
                 // but the rendering will not happen until the renderGroup is rendered!
@@ -151,6 +153,7 @@ export class RenderGroupSystem implements System
                 renderGroup.texture = texture;
                 renderGroup._textureBounds ||= new Bounds();
                 renderGroup._textureBounds.copyFrom(bounds);
+                renderGroup.textureNeedsMeasure = false;
 
                 if (lastTexture !== renderGroup.texture)
                 {

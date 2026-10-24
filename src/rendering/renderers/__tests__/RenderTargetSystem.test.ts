@@ -3,6 +3,7 @@ import { GpuProgram } from '../gpu/shader/GpuProgram';
 import { Geometry } from '../shared/geometry/Geometry';
 import { RenderTarget } from '../shared/renderTarget/RenderTarget';
 import { State } from '../shared/state/State';
+import { RenderTexture } from '../shared/texture/RenderTexture';
 import { TextureSource } from '../shared/texture/sources/TextureSource';
 import { Texture } from '../shared/texture/Texture';
 import { describeLocalOnly, getWebGLRenderer, getWebGPURenderer } from '@test-utils';
@@ -81,6 +82,15 @@ describe('RenderTargetSystem', () =>
 
 describeLocalOnly('RenderTargetSystem idempotent bind (WebGPU)', () =>
 {
+    // Counts the passes bound from here on: one that clears begins at once, one that only loads waits for a draw.
+    function passesBound(webgpu: WebGPURenderer): () => number
+    {
+        const begun = jest.spyOn(webgpu.encoder, 'beginRenderPass');
+        const deferred = jest.spyOn(webgpu.encoder, 'deferRenderPass');
+
+        return () => begun.mock.calls.length + deferred.mock.calls.length;
+    }
+
     it('reuses the open pass when binding the same target with no clear', async () =>
     {
         renderer = await getWebGPURenderer() as WebGPURenderer;
@@ -89,14 +99,14 @@ describeLocalOnly('RenderTargetSystem idempotent bind (WebGPU)', () =>
 
         const target = createTarget();
 
-        const beginSpy = jest.spyOn(renderer.encoder, 'beginRenderPass');
+        const bound = passesBound(renderer);
         const viewportSpy = jest.spyOn(renderer.encoder, 'setViewport');
 
         renderer.renderTarget.bind({ target, clear: false });
         renderer.renderTarget.bind({ target, clear: false });
 
-        // one real begin, but the viewport moves on every bind
-        expect(beginSpy).toHaveBeenCalledTimes(1);
+        // one pass, but the viewport moves on every bind
+        expect(bound()).toBe(1);
         expect(viewportSpy).toHaveBeenCalledTimes(2);
     });
 
@@ -117,7 +127,7 @@ describeLocalOnly('RenderTargetSystem idempotent bind (WebGPU)', () =>
         expect(beginSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('forces a real begin for a partial clear (cannot flip loadOp mid-pass)', async () =>
+    it('binds a new pass for a partial clear (cannot flip loadOp mid-pass)', async () =>
     {
         renderer = await getWebGPURenderer() as WebGPURenderer;
 
@@ -127,14 +137,14 @@ describeLocalOnly('RenderTargetSystem idempotent bind (WebGPU)', () =>
 
         renderer.renderTarget.bind({ target, clear: false });
 
-        const beginSpy = jest.spyOn(renderer.encoder, 'beginRenderPass');
+        const bound = passesBound(renderer);
 
         renderer.renderTarget.bind({ target, clear: CLEAR.DEPTH });
 
-        expect(beginSpy).toHaveBeenCalledTimes(1);
+        expect(bound()).toBe(1);
     });
 
-    it('forces a real begin when the mip level changes', async () =>
+    it('binds a new pass when the mip level changes', async () =>
     {
         renderer = await getWebGPURenderer() as WebGPURenderer;
 
@@ -144,14 +154,14 @@ describeLocalOnly('RenderTargetSystem idempotent bind (WebGPU)', () =>
 
         renderer.renderTarget.bind({ target, clear: false, mipLevel: 0 });
 
-        const beginSpy = jest.spyOn(renderer.encoder, 'beginRenderPass');
+        const bound = passesBound(renderer);
 
         renderer.renderTarget.bind({ target, clear: false, mipLevel: 1 });
 
-        expect(beginSpy).toHaveBeenCalledTimes(1);
+        expect(bound()).toBe(1);
     });
 
-    it('forces a real begin when the array layer changes', async () =>
+    it('binds a new pass when the array layer changes', async () =>
     {
         renderer = await getWebGPURenderer() as WebGPURenderer;
 
@@ -161,11 +171,11 @@ describeLocalOnly('RenderTargetSystem idempotent bind (WebGPU)', () =>
 
         renderer.renderTarget.bind({ target, clear: false, layer: 0 });
 
-        const beginSpy = jest.spyOn(renderer.encoder, 'beginRenderPass');
+        const bound = passesBound(renderer);
 
         renderer.renderTarget.bind({ target, clear: false, layer: 1 });
 
-        expect(beginSpy).toHaveBeenCalledTimes(1);
+        expect(bound()).toBe(1);
     });
 
     it('reopens the pass after it has been finished (copy case)', async () =>
@@ -178,12 +188,51 @@ describeLocalOnly('RenderTargetSystem idempotent bind (WebGPU)', () =>
 
         renderer.renderTarget.bind({ target, clear: false });
 
-        const beginSpy = jest.spyOn(renderer.encoder, 'beginRenderPass');
+        const bound = passesBound(renderer);
 
         renderer.renderTarget.finishRenderPass();
         renderer.renderTarget.bind({ target, clear: false });
 
-        expect(beginSpy).toHaveBeenCalledTimes(1);
+        expect(bound()).toBe(1);
+    });
+
+    it('begins a pass that only loads at its first draw, and never one nothing draws in', async () =>
+    {
+        renderer = await getWebGPURenderer() as WebGPURenderer;
+
+        const target = RenderTexture.create({ width: 8, height: 8 });
+        const begin = jest.spyOn(renderer.encoder, 'beginRenderPass');
+
+        renderer.render({ container: new Graphics().rect(0, 0, 8, 8).fill(0xff0000), target });
+        expect(begin).toHaveBeenCalledTimes(1);
+
+        begin.mockClear();
+        renderer.render({ container: new Container(), target, clear: false });
+        expect(begin).not.toHaveBeenCalled();
+
+        renderer.render({ container: new Graphics().rect(0, 0, 4, 4).fill(0x00ff00), target, clear: false });
+        expect(begin).toHaveBeenCalledTimes(1);
+
+        const { pixels } = renderer.extract.pixels(target);
+
+        expect(Array.from(pixels.slice(0, 4))).toEqual([0, 255, 0, 255]);
+        expect(Array.from(pixels.slice(((6 * 8) + 6) * 4, ((6 * 8) + 7) * 4))).toEqual([255, 0, 0, 255]);
+    });
+
+    it('gives a pass that waits for its first draw the viewport its bind set', async () =>
+    {
+        renderer = await getWebGPURenderer() as WebGPURenderer;
+
+        const target = RenderTexture.create({ width: 16, height: 16 });
+        const framed = new Texture({ source: target.source, frame: new Rectangle(4, 4, 8, 8) });
+
+        renderer.render({ container: new Graphics().rect(0, 0, 8, 8).fill(0xff0000), target: framed, clear: false });
+
+        const { pixels } = renderer.extract.pixels(target);
+        const alpha = (x: number, y: number) => pixels[(((y * 16) + x) * 4) + 3];
+
+        expect([alpha(4, 4), alpha(11, 11), alpha(3, 8), alpha(12, 8), alpha(8, 3), alpha(8, 12)])
+            .toEqual([255, 255, 0, 0, 0, 0]);
     });
 
     it('does not flush the encoder state cache on a reused bind', async () =>

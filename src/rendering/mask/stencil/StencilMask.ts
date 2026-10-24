@@ -5,6 +5,7 @@ import { addMaskLocalBounds } from '../utils/addMaskLocalBounds';
 
 import type { ExtensionMetadata } from '../../../extensions/Extensions';
 import type { Point } from '../../../maths/point/Point';
+import type { Rectangle } from '../../../maths/shapes/Rectangle';
 import type { Bounds } from '../../../scene/container/bounds/Bounds';
 import type { Effect } from '../../../scene/container/Effect';
 import type { PoolItem } from '../../../utils/pool/Pool';
@@ -46,6 +47,12 @@ export class StencilMask implements Effect, PoolItem
         this.mask.measurable = true;
         this.mask.includeInBuild = true;
         this.mask = null;
+    }
+
+    /** The rectangle a scissor can clip to in place of the stencil; a container's shape is unknown, so none. */
+    public get rectangle(): Rectangle | null
+    {
+        return null;
     }
 
     public addBounds(bounds: Bounds, skipUpdateTransform: boolean): void

@@ -30,16 +30,19 @@ fn mainVertex(
   @location(4) aRotation: f32,
 ) -> VSOutput {
   
-   let v = vec2(
+   let corner = vec2(
        aVertex.x * cos(aRotation) - aVertex.y * sin(aRotation),
        aVertex.x * sin(aRotation) + aVertex.y * cos(aRotation)
-   ) + aPosition;
+   );
 
-   var position = vec4((uniforms.uTranslationMatrix * vec3(v, 1.0)).xy, 0.0, 1.0);
+   // Rounding moves the anchor onto a whole pixel and the quad with it, so a turned quad keeps its shape.
+   var anchor = (uniforms.uTranslationMatrix * vec3(aPosition, 1.0)).xy;
 
    if(uniforms.uRound == 1.0) {
-       position = vec4(roundPixels(position.xy, uniforms.uResolution), position.zw);
+       anchor = roundPixels(anchor, uniforms.uResolution);
    }
+
+   let position = vec4(anchor + (uniforms.uTranslationMatrix * vec3(corner, 0.0)).xy, 0.0, 1.0);
 
     let vColor = vec4(aColor.rgb * aColor.a, aColor.a) * uniforms.uColor;
 

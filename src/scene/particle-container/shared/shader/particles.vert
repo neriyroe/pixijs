@@ -24,15 +24,15 @@ void main(void){
     float x = aVertex.x * cosRotation - aVertex.y * sinRotation;
     float y = aVertex.x * sinRotation + aVertex.y * cosRotation;
 
-    vec2 v = vec2(x, y);
-    v = v + aPosition;
-
-    gl_Position = vec4((uTranslationMatrix * vec3(v, 1.0)).xy, 0.0, 1.0);
+    // Rounding moves the anchor onto a whole pixel and the quad with it, so a turned quad keeps its shape.
+    vec2 anchor = (uTranslationMatrix * vec3(aPosition, 1.0)).xy;
 
     if(uRound == 1.0)
     {
-        gl_Position.xy = roundPixels(gl_Position.xy, uResolution);
+        anchor = roundPixels(anchor, uResolution);
     }
+
+    gl_Position = vec4(anchor + (uTranslationMatrix * vec3(x, y, 0.0)).xy, 0.0, 1.0);
 
     vUV = aUV;
     vColor = vec4(aColor.rgb * aColor.a, aColor.a) * uColor;

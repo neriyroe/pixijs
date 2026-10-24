@@ -3,6 +3,7 @@ import { InstructionSet } from '../../rendering/renderers/shared/instructions/In
 import { type SCALE_MODE, type TEXTURE_FORMATS } from '../../rendering/renderers/shared/texture/const';
 import { TexturePool } from '../../rendering/renderers/shared/texture/TexturePool';
 import { type Renderer } from '../../rendering/renderers/types';
+import { multiplyColors } from './utils/multiplyColors';
 
 import type { Instruction } from '../../rendering/renderers/shared/instructions/Instruction';
 import type { Texture } from '../../rendering/renderers/shared/texture/Texture';
@@ -87,6 +88,9 @@ export class RenderGroup implements Instruction
      */
     public textureNeedsUpdate = true;
 
+    /** Whether the next cache update measures the bounds and takes a new texture; a repaint keeps both. @internal */
+    public textureNeedsMeasure = true;
+
     /**
      * Indicates if the container should be cached as a texture.
      * @default false
@@ -130,6 +134,7 @@ export class RenderGroup implements Instruction
     private _inverseWorldTransform: Matrix;
     private _textureOffsetInverseTransform: Matrix;
     private _inverseParentTextureTransform: Matrix;
+    private _textureTransform: Matrix;
 
     private _matrixDirty = 0b111;
 
@@ -159,6 +164,7 @@ export class RenderGroup implements Instruction
         this.textureOptions = options;
         this.isCachedAsTexture = true;
         this.textureNeedsUpdate = true;
+        this.textureNeedsMeasure = true;
     }
 
     public disableCacheAsTexture(): void
@@ -174,14 +180,28 @@ export class RenderGroup implements Instruction
     public updateCacheTexture(): void
     {
         this.textureNeedsUpdate = true;
+        this.textureNeedsMeasure = true;
 
         const cachedParent = this._parentCacheAsTextureRenderGroup;
 
         // It's worth going bottom-up and notify all parents cached as texture
         // that cached child was updated.
-        if (cachedParent && !cachedParent.textureNeedsUpdate)
+        if (cachedParent && !(cachedParent.textureNeedsUpdate && cachedParent.textureNeedsMeasure))
         {
             cachedParent.updateCacheTexture();
+        }
+    }
+
+    /** Redraws the cached texture in place for a content-only change, keeping its measured bounds and texture. */
+    public repaintCacheTexture(): void
+    {
+        this.textureNeedsUpdate = true;
+
+        const cachedParent = this._parentCacheAsTextureRenderGroup;
+
+        if (cachedParent && !cachedParent.textureNeedsUpdate)
+        {
+            cachedParent.repaintCacheTexture();
         }
     }
 
@@ -492,6 +512,32 @@ export class RenderGroup implements Instruction
         }
 
         return this.worldTransform;
+    }
+
+    /** Maps the root's local space onto its cache texture, whose origin is the top left of the texture bounds. */
+    public get textureTransform(): Matrix
+    {
+        const bounds = this._textureBounds;
+
+        return (this._textureTransform ||= new Matrix()).set(1, 0, 0, 1, -bounds.x, -bounds.y);
+    }
+
+    public get parentTextureColorAlpha(): number
+    {
+        const parentCacheAsTexture = this._parentCacheAsTextureRenderGroup;
+
+        if (!parentCacheAsTexture) return this.worldColorAlpha;
+
+        let color = this.root.groupColor;
+        let alpha = this.root.groupAlpha;
+
+        for (let group = this.renderGroupParent; group && group !== parentCacheAsTexture; group = group.renderGroupParent)
+        {
+            color = multiplyColors(group.root.groupColor, color);
+            alpha *= group.root.groupAlpha;
+        }
+
+        return color + (((alpha * 255) | 0) << 24);
     }
 
     /**

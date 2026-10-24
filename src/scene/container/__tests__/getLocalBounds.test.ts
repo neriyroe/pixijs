@@ -293,6 +293,27 @@ describe('getLocalBounds', () =>
         expect(bounds).toMatchObject({ minX: 0, minY: 0, maxX: 500 / 2, maxY: 500 / 2 });
     });
 
+    it('should keep cached local bounds while only children below a boundsArea change', async () =>
+    {
+        const container = new Container({ label: 'container' });
+        const child = new Container({ label: 'child', boundsArea: new Rectangle(0, 0, 50, 50) });
+        const view = new DummyView({ label: 'view' });
+
+        container.addChild(child);
+        child.addChild(view);
+
+        expect(container.getLocalBounds()).toMatchObject({ minX: 0, minY: 0, maxX: 50, maxY: 50 });
+
+        view.x = 500;
+
+        expect(container.getLocalBounds()).toMatchObject({ minX: 0, minY: 0, maxX: 50, maxY: 50 });
+        expect(container._localBoundsCacheData.didChange).toBe(false);
+
+        child.boundsArea.width = 80;
+
+        expect(container.getLocalBounds()).toMatchObject({ minX: 0, minY: 0, maxX: 80, maxY: 50 });
+    });
+
     it('should calculate correct bounds when target has a mask', async () =>
     {
         const root = new Container({ label: 'root' });

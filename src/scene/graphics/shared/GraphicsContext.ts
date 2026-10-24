@@ -15,6 +15,7 @@ import { toFillStyle, toStrokeStyle } from './utils/convertFillInputToFillStyle'
 import { getMaxMiterRatio } from './utils/getMaxMiterRatio';
 
 import type { PointData } from '../../../maths/point/PointData';
+import type { Rectangle } from '../../../maths/shapes/Rectangle';
 import type { Shader } from '../../../rendering/renderers/shared/shader/Shader';
 import type { TextureDestroyOptions, TypeOrBool } from '../../container/destroyTypes';
 import type { ConvertedFillStyle, ConvertedStrokeStyle, FillInput, StrokeInput } from './FillTypes';
@@ -1143,6 +1144,25 @@ export class GraphicsContext extends EventEmitter<{
         }
 
         return bounds;
+    }
+
+    /** The rectangle this context fills while one plain rectangle fill is all it draws, otherwise null. @internal */
+    get fillRectangle(): Rectangle | null
+    {
+        const instructions = this.instructions;
+
+        if (instructions.length !== 1 || instructions[0].action !== 'fill') return null;
+
+        const { path, hole } = (instructions[0] as FillInstruction).data;
+        const primitives = path.shapePath.shapePrimitives;
+
+        if (hole || primitives.length !== 1) return null;
+
+        const { shape, transform, holes } = primitives[0];
+
+        return shape.type === 'rectangle' && !holes?.length && (!transform || transform.isIdentity())
+            ? shape as Rectangle
+            : null;
     }
 
     /**

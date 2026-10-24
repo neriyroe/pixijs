@@ -21,7 +21,8 @@ function createMaskedScene(): Container
     content.setSize(32, 32);
     content.tint = 0xff0000;
 
-    const mask = new Graphics().rect(0, 0, 16, 32).fill(0xffffff);
+    // a polygon rather than a rect, which WebGPU would clip with a scissor instead of the stencil
+    const mask = new Graphics().poly([0, 0, 16, 0, 16, 32, 0, 32]).fill(0xffffff);
 
     scene.addChild(content, mask);
     content.mask = mask;

@@ -1,3 +1,4 @@
+import type { Rectangle } from '../../../maths/shapes/Rectangle';
 import type { Container } from '../Container';
 
 /**
@@ -45,11 +46,47 @@ export function checkChildrenDidChange(
 
         previousData.index = index + 2;
 
-        if (child.children.length)
+        if (boundsAreaStandsIn(child))
+        {
+            checkAreaDidChange(child.boundsArea, previousData);
+        }
+        else if (child.children.length)
         {
             checkChildrenDidChange(child, previousData);
         }
     }
 
     return previousData.didChange;
+}
+
+// getLocalBounds measures a bounds area in place of the children, unless the container's own mask lies among them.
+function boundsAreaStandsIn(container: Container): boolean
+{
+    if (!container.boundsArea) return false;
+
+    for (let node = (container.mask as Container)?.parent; node; node = node.parent)
+    {
+        if (node === container) return false;
+    }
+
+    return true;
+}
+
+// The area is recorded by value, since it can be resized in place.
+function checkAreaDidChange(area: Rectangle, previousData: Parameters<typeof checkChildrenDidChange>[1]): void
+{
+    const { data, index } = previousData;
+
+    if (data[index] !== area.x || data[index + 1] !== area.y
+        || data[index + 2] !== area.width || data[index + 3] !== area.height)
+    {
+        data[index] = area.x;
+        data[index + 1] = area.y;
+        data[index + 2] = area.width;
+        data[index + 3] = area.height;
+
+        previousData.didChange = true;
+    }
+
+    previousData.index = index + 4;
 }

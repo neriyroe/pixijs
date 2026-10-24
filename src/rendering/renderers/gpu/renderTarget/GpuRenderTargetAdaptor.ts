@@ -33,6 +33,26 @@ function getCanvasContextFormat(format: GPUTextureFormat): GPUTextureFormat
     return preferred;
 }
 
+// Whether an attachment's ops keep what it holds; an aspect without ops is read-only or absent, which keeps it too.
+function keeps(loadOp: GPULoadOp | undefined, storeOp: GPUStoreOp | undefined): boolean
+{
+    return (loadOp ?? 'load') === 'load' && (storeOp ?? 'store') === 'store';
+}
+
+// Whether a pass of `descriptor` that draws nothing leaves its target as it was.
+function keepsTarget(descriptor: GPURenderPassDescriptor): boolean
+{
+    for (const attachment of descriptor.colorAttachments)
+    {
+        if (attachment && !keeps(attachment.loadOp, attachment.storeOp)) return false;
+    }
+
+    const depthStencil = descriptor.depthStencilAttachment;
+
+    return !depthStencil || (keeps(depthStencil.depthLoadOp, depthStencil.depthStoreOp)
+        && keeps(depthStencil.stencilLoadOp, depthStencil.stencilStoreOp));
+}
+
 /**
  * The WebGPU adaptor for the render target system. Allows the Render Target System to
  * be used with the WebGPU renderer
@@ -44,9 +64,9 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
     private _renderTargetSystem: RenderTargetSystem<GpuRenderTarget>;
     private _renderer: WebGPURenderer<HTMLCanvasElement>;
     /**
-     * The render target the currently open render pass is rendering to (plus the subresource it is
+     * The render target the currently bound render pass is rendering to (plus the subresource it is
      * bound to). Used to make {@link startRenderPass} idempotent: binding the same target/mip/layer
-     * again with no clear reuses the open pass instead of tearing it down and beginning a new one.
+     * again with no clear reuses the bound pass instead of tearing it down and beginning a new one.
      * Reset to `null` whenever the pass is closed ({@link finishRenderPass}).
      */
     private _activePass: {
@@ -206,7 +226,7 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
             // a depth/stencil attachment added mid-pass (e.g. mask system's ensureDepthStencil)
             // changes the attachment set, so the pass must genuinely reopen
             && activePass.depthStencil === hasDepthStencil
-            && this._renderer.encoder.renderPassEncoder !== null
+            && this._renderer.encoder.hasRenderPass
             && clearBits === CLEAR.NONE;
 
         // even a reused pass can change its winding: the same target rebound with the other `flipY`
@@ -235,12 +255,19 @@ export class GpuRenderTargetAdaptor implements RenderTargetAdaptor<GpuRenderTarg
                 renderTarget, restore, encoder.commandEncoder, () => encoder.beginRenderPass(gpuRenderTarget)
             );
         }
+        else if (keepsTarget(descriptor))
+        {
+            // nothing changes until something draws, so the pass waits for that and one nothing draws in never begins
+            encoder.deferRenderPass(gpuRenderTarget);
+        }
         else
         {
             encoder.beginRenderPass(gpuRenderTarget);
         }
 
         encoder.setViewport(viewport);
+
+        if (gpuRenderTarget.scissor) encoder.setScissorRect(gpuRenderTarget.scissor);
 
         this._activePass = { renderTarget, mipLevel, layer, depthStencil: hasDepthStencil };
     }

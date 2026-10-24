@@ -1,5 +1,6 @@
 import { STENCIL_MODES } from '../../shared/state/const';
 
+import type { Rectangle } from '../../../../maths/shapes/Rectangle';
 import type { TextureSource } from '../../shared/texture/sources/TextureSource';
 
 /**
@@ -43,4 +44,6 @@ export class GpuRenderTarget
     public stencilReference = 0;
     /** how many stencil masks are currently pushed on this target */
     public maskStackIndex = 0;
+    /** The pixels the masks pushed on this target clip to, or null while none does; a reopened pass restores it. */
+    public scissor: Rectangle | null = null;
 }

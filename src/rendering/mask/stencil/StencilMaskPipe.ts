@@ -16,10 +16,10 @@ import type { StencilMaskInstruction } from './StencilMaskTypes';
 /** @internal */
 export class StencilMaskPipe implements InstructionPipe<StencilMaskInstruction>
 {
+    /** WebGPU registers ScissorMaskPipe under this name, which hands it the masks a scissor cannot stand in for. */
     public static extension = {
         type: [
             ExtensionType.WebGLPipes,
-            ExtensionType.WebGPUPipes,
         ],
         name: 'stencilMask',
     } as const;

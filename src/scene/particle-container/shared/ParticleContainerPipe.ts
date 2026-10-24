@@ -131,17 +131,22 @@ export class ParticleContainerPipe implements RenderPipe<ParticleContainer>
 
         const transformationMatrix = uniforms.uTranslationMatrix;
 
-        container.worldTransform.copyTo(transformationMatrix);
-
-        // Apply the global offset from filters (e.g., when using filterArea)
         const globalUniformData = renderer.globalUniforms.globalUniformData;
 
+        transformationMatrix.appendFrom(container.groupTransform, globalUniformData.worldTransformMatrix);
+
+        // Apply the global offset from filters (e.g., when using filterArea)
         transformationMatrix.tx -= globalUniformData.offset.x;
         transformationMatrix.ty -= globalUniformData.offset.y;
 
         transformationMatrix.prepend(globalUniformData.projectionMatrix);
 
-        uniforms.uResolution = globalUniformData.resolution;
+        // Rounding steps over the pixels clip space spans; a pooled target binds a frame smaller than its source.
+        const viewport = renderer.renderTarget.viewport;
+        const resolution = uniforms.uResolution;
+
+        resolution[0] = viewport.width;
+        resolution[1] = viewport.height;
         uniforms.uRound = renderer._roundPixels | container._roundPixels;
 
         // The particle shader has no uWorldColorAlpha, so the render group's world

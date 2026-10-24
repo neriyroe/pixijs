@@ -37,6 +37,7 @@ export * from './mask/color/ColorMaskPipe';
 export * from './mask/color/ColorMaskTypes';
 export * from './mask/MaskEffectManager';
 export * from './mask/scissor/ScissorMask';
+export * from './mask/scissor/ScissorMaskPipe';
 export * from './mask/stencil/CanvasStencilMaskPipe';
 export * from './mask/stencil/StencilMask';
 export * from './mask/stencil/StencilMaskPipe';

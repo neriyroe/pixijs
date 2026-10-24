@@ -1,61 +1,32 @@
-import { addMaskBounds } from '../utils/addMaskBounds';
-import { addMaskLocalBounds } from '../utils/addMaskLocalBounds';
+import { ExtensionType } from '../../../extensions/Extensions';
+import { Graphics } from '../../../scene/graphics/shared/Graphics';
+import { StencilMask } from '../stencil/StencilMask';
 
-import type { Point } from '../../../maths/point/Point';
-import type { Bounds } from '../../../scene/container/bounds/Bounds';
-import type { Container } from '../../../scene/container/Container';
-import type { Effect } from '../../../scene/container/Effect';
+import type { ExtensionMetadata } from '../../../extensions/Extensions';
+import type { Rectangle } from '../../../maths/shapes/Rectangle';
 
-/**
- * ScissorMask is an effect that applies a scissor mask to a container.
- * It restricts rendering to the area defined by the mask.
- * The mask is a Container that defines the area to be rendered.
- * The mask must be a Container that is not renderable or measurable.
- * This effect is used to create clipping regions in the rendering process.
- * @category rendering
- * @advanced
- */
-export class ScissorMask implements Effect
+/** A Graphics stencil mask, which WebGPU scissors while it is one axis-aligned rectangle. @category rendering @advanced */
+export class ScissorMask extends StencilMask
 {
-    public priority = 0;
-    public mask: Container;
-    public pipe = 'scissorMask';
+    /** Tested ahead of StencilMask, which takes every container. */
+    public static override extension: ExtensionMetadata = {
+        type: ExtensionType.MaskEffect,
+        name: 'scissorMask',
+        priority: 0,
+    };
 
-    constructor(mask: Container)
+    public override get rectangle(): Rectangle | null
     {
-        this.mask = mask;
+        const mask = this.mask as Graphics;
 
-        this.mask.renderable = false;
-        this.mask.measurable = false;
+        // children, effects, an own render group and snapped vertices all change what the stencil path draws
+        if (mask.children.length || mask.effects.length || mask.renderGroup || mask.roundPixels) return null;
+
+        return mask.context.fillRectangle;
     }
 
-    public addBounds(bounds: Bounds, skipUpdateTransform?: boolean): void
+    public static override test(mask: any): boolean
     {
-        addMaskBounds(this.mask, bounds, skipUpdateTransform);
-    }
-
-    public addLocalBounds(bounds: Bounds, localRoot: Container): void
-    {
-        addMaskLocalBounds(this.mask, bounds, localRoot);
-    }
-
-    public containsPoint(point: Point, hitTestFn: (container: Container, point: Point) => boolean): boolean
-    {
-        const mask = this.mask as any;
-
-        // if the point is in the mask, yay!
-        return hitTestFn(mask, point);
-    }
-
-    public reset()
-    {
-        if (this.mask === null) return;
-        this.mask.measurable = true;
-        this.mask = null;
-    }
-
-    public destroy(): void
-    {
-        this.reset();
+        return mask instanceof Graphics;
     }
 }
