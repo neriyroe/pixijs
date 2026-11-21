@@ -32,10 +32,13 @@ export class GPUTextureGpuData implements GPUData
     public gpuTexture: GPUTexture;
     public textureView: GPUTextureView = null;
     public textureViews: Record<string, GPUTextureView> = Object.create(null);
+    /** GPU bytes the texture system allocated for this texture; 0 for a texture another library owns. */
+    public readonly bytes: number;
 
-    constructor(gpuTexture: GPUTexture)
+    constructor(gpuTexture: GPUTexture, bytes = 0)
     {
         this.gpuTexture = gpuTexture;
+        this.bytes = bytes;
     }
 
     /** Destroys this GPU data instance. */
@@ -77,6 +80,39 @@ function getViewDescriptorKey(viewDescriptor: GPUTextureViewDescriptor): string
         + `${viewDescriptor.baseArrayLayer || 0}.${viewDescriptor.arrayLayerCount || ''}`;
 }
 
+const PACKED_TEXEL_BYTES: Record<string, number> = {
+    stencil8: 1, depth16unorm: 2, depth24plus: 4, 'depth24plus-stencil8': 4, depth32float: 4,
+    'depth32float-stencil8': 8, rgb9e5ufloat: 4, rgb10a2unorm: 4, rgb10a2uint: 4, rg11b10ufloat: 4,
+};
+const CHANNELS: Record<string, number> = { r: 1, rg: 2, rgba: 4, bgra: 4 };
+
+/** The nominal GPU footprint of a texture made from `descriptor`, every mip, layer and sample included. */
+function getTextureBytes(descriptor: GPUTextureDescriptor): number
+{
+    const { width, height = 1, depthOrArrayLayers = 1 } = descriptor.size as GPUExtent3DDict;
+    const format = descriptor.format;
+    const astc = (/^astc-(\d+)x(\d+)/).exec(format);
+    const plain = (/^(rgba|bgra|rg|r)(8|16|32)/).exec(format);
+    let block = { bytes: PACKED_TEXEL_BYTES[format] ?? 4, width: 1, height: 1 };
+
+    if (astc) block = { bytes: 16, width: Number(astc[1]), height: Number(astc[2]) };
+    else if ((/^(bc[14]-|etc2-rgb8|eac-r11)/).test(format)) block = { bytes: 8, width: 4, height: 4 };
+    else if ((/^(bc|etc2|eac)/).test(format)) block = { bytes: 16, width: 4, height: 4 };
+    else if (plain) block.bytes = CHANNELS[plain[1]] * Number(plain[2]) / 8;
+
+    let bytes = 0;
+
+    for (let mip = 0; mip < (descriptor.mipLevelCount ?? 1); mip++)
+    {
+        const depth = descriptor.dimension === '3d' ? Math.max(1, depthOrArrayLayers >> mip) : depthOrArrayLayers;
+
+        bytes += Math.ceil(Math.max(1, width >> mip) / block.width)
+            * Math.ceil(Math.max(1, height >> mip) / block.height) * block.bytes * depth;
+    }
+
+    return bytes * (descriptor.sampleCount ?? 1);
+}
+
 /**
  * The system that handles textures for the GPU.
  * @category rendering
@@ -112,10 +148,23 @@ export class GpuTextureSystem implements System, CanvasGenerator
 
     private readonly _renderer: WebGPURenderer;
     private readonly _managedTextures: GCManagedHash<TextureSource>;
+    private _gpuBytes = 0;
     /**
      * @deprecated since 8.15.0
      */
     public get managedTextures(): Readonly<TextureSource[]> { return Object.values(this._managedTextures.items); }
+
+    /** GPU bytes of every texture this system created and still holds, at each format's nominal footprint. */
+    public get gpuBytes(): number
+    {
+        return this._gpuBytes;
+    }
+
+    /** GPU bytes this system created for `source`; 0 while it has none or another library owns its texture. */
+    public getGpuBytes(source: TextureSource): number
+    {
+        return (source._gpuData[this._renderer.uid] as GPUTextureGpuData)?.bytes ?? 0;
+    }
 
     constructor(renderer: WebGPURenderer)
     {
@@ -199,8 +248,13 @@ export class GpuTextureSystem implements System, CanvasGenerator
 
             if (source.uploadMethodId !== 'compressed')
             {
-                usage |= GPUTextureUsage.RENDER_ATTACHMENT;
                 usage |= GPUTextureUsage.COPY_SRC;
+
+                // a render attachment costs placement and compression, so only targets and render-pass uploads take it
+                if (source.renderTarget || this._uploads[source.uploadMethodId]?.needsRenderAttachment?.(source))
+                {
+                    usage |= GPUTextureUsage.RENDER_ATTACHMENT;
+                }
             }
 
             if (source.storage) usage |= GPUTextureUsage.STORAGE_BINDING;
@@ -226,8 +280,10 @@ export class GpuTextureSystem implements System, CanvasGenerator
         };
 
         const gpuTexture = this._gpu.device.createTexture(textureDescriptor);
+        const gpuData = new GPUTextureGpuData(gpuTexture, getTextureBytes(textureDescriptor));
 
-        source._gpuData[this._renderer.uid] = new GPUTextureGpuData(gpuTexture);
+        source._gpuData[this._renderer.uid] = gpuData;
+        this._gpuBytes += gpuData.bytes;
 
         const added = this._managedTextures.add(source);
 
@@ -279,6 +335,7 @@ export class GpuTextureSystem implements System, CanvasGenerator
 
     protected onSourceUnload(source: TextureSource): void
     {
+        this._gpuBytes -= this.getGpuBytes(source);
         source.off('update', this.onSourceUpdate, this);
         source.off('resize', this.onSourceResize, this);
         source.off('updateMipmaps', this.onUpdateMipmaps, this);
@@ -297,6 +354,7 @@ export class GpuTextureSystem implements System, CanvasGenerator
         }
         else if (gpuTexture.width !== source.pixelWidth || gpuTexture.height !== source.pixelHeight)
         {
+            this._gpuBytes -= gpuData.bytes;
             gpuData.destroy();
             this._bindGroupHash[source.uid] = null;
             source._gpuData[this._renderer.uid] = null;

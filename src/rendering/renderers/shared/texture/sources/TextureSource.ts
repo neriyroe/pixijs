@@ -133,6 +133,8 @@ export interface TextureSourceOptions<T extends Record<string, any> = any> exten
      * @default false
      */
     storage?: boolean;
+    /** WebGPU only: PixiJS renders into this texture, so it is created as a render attachment. Defaults to false. */
+    renderTarget?: boolean;
 }
 
 /**
@@ -326,6 +328,9 @@ export class TextureSource<T extends Record<string, any> = any> extends EventEmi
      */
     public storage = false;
 
+    /** Whether PixiJS renders into this texture, read when its GPU texture is created; a render target sets it. */
+    public renderTarget = false;
+
     /**
      * Has the source been destroyed?
      * @readonly
@@ -412,6 +417,7 @@ export class TextureSource<T extends Record<string, any> = any> extends EventEmi
         this.antialias = dimension === '3d' ? false : options.antialias;
         this.transient = options.transient ?? false;
         this.storage = options.storage ?? false;
+        this.renderTarget = options.renderTarget ?? false;
         this.alphaMode = options.alphaMode;
 
         this.style = new TextureStyle(definedProps(options));

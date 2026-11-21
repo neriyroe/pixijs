@@ -26,6 +26,7 @@ describe('getPo2TextureFromSource', () =>
         canvas.width = 200;
         canvas.height = 200;
 
+        // sized to the frame's pixels, not to the canvas holding them
         const texture2 = getPo2TextureFromSource(canvas, 100, 100, 2);
 
         expect(texture2.frame).toEqual(expect.objectContaining({
@@ -34,11 +35,26 @@ describe('getPo2TextureFromSource', () =>
         }));
 
         expect(texture2.source).toEqual(expect.objectContaining({
-            pixelWidth: 256,
-            pixelHeight: 256,
-            width: 128,
-            height: 128,
+            pixelWidth: 128,
+            pixelHeight: 128,
+            width: 64,
+            height: 64,
         }));
+    });
+
+    it('should take an upload-only texture that reaches the odd last pixel', () =>
+    {
+        const canvas = document.createElement('canvas');
+
+        canvas.width = 512;
+        canvas.height = 64;
+
+        const texture = getPo2TextureFromSource(canvas, 301, 41, 2);
+
+        expect(texture.source.renderTarget).toBe(false);
+        expect(texture.source.uploadMethodId).toBe('image');
+        expect([texture.source.pixelWidth, texture.source.pixelHeight]).toEqual([320, 64]);
+        expect([texture.frame.width, texture.frame.height]).toEqual([150.5, 20.5]);
     });
 
     describe('autoGenerateMipmaps parameter', () =>

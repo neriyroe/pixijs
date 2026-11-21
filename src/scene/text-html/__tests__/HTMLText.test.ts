@@ -90,15 +90,15 @@ describe('HTMLText', () =>
 
     it('should clean up a texture whose pool bucket was pruned by a resize', async () =>
     {
-        const renderer = await getWebGLRenderer({ width: 100, height: 100 });
-        // wide enough to take the 100px screen bucket rather than the 64px power of two below it
-        const text = new HTMLText({ text: 'WIDE', style: { fontSize: 36, fill: 'white' } });
+        const renderer = await getWebGLRenderer({ width: 90, height: 90 });
+        // wide enough for the 96px size class, so it takes the narrower 90px screen bucket instead
+        const text = new HTMLText({ text: 'WIDE', style: { fontSize: 30, fill: 'white' } });
 
         renderer.render(text);
 
         const pooled = await (text._gpuData[renderer.uid] as BatchableHTMLText).texturePromise;
 
-        expect(pooled.source.pixelWidth).toBe(100);
+        expect(pooled.source.pixelWidth).toBe(90);
 
         // the screen bucket no longer matches a live screen, so returning the texture destroys it
         renderer.resize(200, 200);

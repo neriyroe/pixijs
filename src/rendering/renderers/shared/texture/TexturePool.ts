@@ -17,9 +17,11 @@ let count = 0;
 /** the largest dimension that fits in one of the 15 bit fields of a pool key */
 const maxKeyDimension = 32767;
 
-/** << is 32-bit, so scale and format ride above the packed size with multiply */
-const scaleBit = 0x100000000;
-const formatBit = 0x200000000;
+/** << is 32-bit, so format, render use and scale mode ride above the packed size with multiply */
+const flagsBit = 0x100000000;
+
+/** the finest step between two size classes, in pixels */
+const minClassStep = 32;
 
 const formatIds: Record<string, number> = Object.create(null);
 let nextFormatId = 0;
@@ -33,40 +35,48 @@ function formatId(format: string): number
     return (formatIds[format] = nextFormatId++);
 }
 
+/** Rounds a size up to its class: four classes an octave (32px steps up to 256), so at most a quarter is spare. */
+function sizeClass(pixels: number): number
+{
+    const step = Math.max(minClassStep, nextPow2(pixels) / 8);
+
+    return Math.ceil(pixels / step) * step;
+}
+
+function toPixels(size: number, resolution: number): number
+{
+    return Math.max(1, Math.ceil((size * resolution) - 1e-6));
+}
+
 /**
  * A request for a texture from the pool. `width` and `height` are the minimum frame size the texture must
  * hold; the other fields are the only {@link TextureSourceOptions} the pool honours, and each falls back
- * to the pool's own options.
+ * to the pool's own options. `renderTarget` defaults to true; a texture that only receives uploads asks with false.
  * @category rendering
  * @advanced
  */
 export type TexturePoolRequest = Pick<
     TextureSourceOptions,
-    'resolution' | 'antialias' | 'autoGenerateMipmaps' | 'format' | 'scaleMode'
+    'resolution' | 'antialias' | 'autoGenerateMipmaps' | 'format' | 'scaleMode' | 'renderTarget'
 > & { width: number, height: number };
 
-// One number isolates a bucket.
-// Bits 0-31: antialias, mipmap, height, width. Bit 32: scale mode. Bits 33+: format id.
-function bucketKey(
-    width: number,
-    height: number,
-    antialias: boolean,
-    autoGenerateMipmaps: boolean,
-    format: TEXTURE_FORMATS,
-    scaleMode: SCALE_MODE,
-): number
+// Bits 0-31: antialias, mipmap, height, width. Above them: format id, render use, scale mode.
+function sizeBits(width: number, height: number, antialias: boolean, autoGenerateMipmaps: boolean): number
 {
-    const packed = (width << 17) + (height << 2) + ((autoGenerateMipmaps ? 1 : 0) << 1) + (antialias ? 1 : 0);
-    const scale = scaleMode === 'nearest' ? 1 : 0;
+    return ((width << 17) | (height << 2) | ((autoGenerateMipmaps ? 1 : 0) << 1) | (antialias ? 1 : 0)) >>> 0;
+}
 
-    return packed + (scale * scaleBit) + (formatId(format) * formatBit);
+function flagBits(format: TEXTURE_FORMATS, scaleMode: SCALE_MODE, renderTarget: boolean): number
+{
+    return ((formatId(format) * 4) + (renderTarget ? 2 : 0) + (scaleMode === 'nearest' ? 1 : 0)) * flagsBit;
 }
 
 /**
  * Texture pool, used by FilterSystem and plugins.
  *
- * Stores collection of temporary pow2 or screen-sized renderTextures. Textures are bucketed by size,
- * flags, format and scale mode, so one pool can serve colour, float and depth targets side by side.
+ * Stores collection of temporary render textures, sized to a class a little above the request or to the screen.
+ * Textures are bucketed by size, flags, format, render use and scale mode, so one pool can serve colour, float
+ * and depth targets and upload-only textures side by side. Idle textures stay until {@link TexturePoolClass#trim}.
  * @category rendering
  * @advanced
  */
@@ -75,12 +85,14 @@ export class TexturePoolClass
     /** The default options for texture pool */
     public textureOptions: TextureSourceOptions;
 
-    /** idle textures, keyed by format, scale mode, size and flags */
+    /** idle textures, keyed by format, render use, scale mode, size and flags */
     private readonly _buckets = new Map<number, Texture[]>();
     /** the bucket key of every texture handed out, by texture uid */
     private _poolKey: Record<number, number> = Object.create(null);
     /** the style the pool created for every texture handed out, by texture uid */
     private _poolStyle: Record<number, TextureStyle> = Object.create(null);
+    /** when each idle texture came back to the pool, by texture uid */
+    private _idleSince: Record<number, number> = Object.create(null);
     /** the screens this pool is sizing its textures for */
     private readonly _screens = new ScreenSizeRegistry();
 
@@ -189,6 +201,7 @@ export class TexturePoolClass
             autoGenerateMipmaps: options.autoGenerateMipmaps ?? false,
             format,
             scaleMode,
+            renderTarget: options.renderTarget ?? this.textureOptions.renderTarget ?? true,
         });
 
         return new Texture({
@@ -198,10 +211,11 @@ export class TexturePoolClass
     }
 
     /**
-     * Gets a Power-of-Two render texture or screen sized texture.
+     * Gets a render texture sized to the request's class or to a screen.
      *
      * Width and height are the minimum frame size. Resolution, antialias, mipmaps, format and scale
-     * mode fall back to 1 / false / the pool's own options. Each format and scale mode keeps its own buckets.
+     * mode fall back to 1 / false / the pool's own options. Each format, render use and scale mode keeps its own
+     * buckets. An idle texture one class larger on either axis is taken before a new one is made.
      * @param options - The request, using the same fields as {@link TextureSourceOptions}.
      * @returns The new render texture.
      */
@@ -237,12 +251,12 @@ export class TexturePoolClass
         const autoGenerateMipmaps = options.autoGenerateMipmaps ?? false;
         const format = options.format ?? this.textureOptions.format ?? TextureSource.defaultOptions.format;
         const scaleMode = options.scaleMode ?? this.textureOptions.scaleMode ?? TextureStyle.defaultOptions.scaleMode;
+        const renderTarget = options.renderTarget ?? this.textureOptions.renderTarget ?? true;
 
-        const { width: textureWidth, height: textureHeight } = this.getOptimalSize(
-            frameWidth,
-            frameHeight,
-            resolution,
-        );
+        const pixelWidth = toPixels(frameWidth, resolution);
+        const pixelHeight = toPixels(frameHeight, resolution);
+        const textureWidth = this._fitWidth(pixelWidth);
+        const textureHeight = this._fitHeight(pixelHeight);
 
         // #if _DEBUG
         if (textureWidth > maxKeyDimension || textureHeight > maxKeyDimension)
@@ -252,19 +266,21 @@ export class TexturePoolClass
         }
         // #endif
 
-        const key = bucketKey(textureWidth, textureHeight, antialias, autoGenerateMipmaps, format, scaleMode);
-        let bucket = this._buckets.get(key);
+        const flags = flagBits(format, scaleMode, renderTarget);
+        const key = (width: number, height: number) => sizeBits(width, height, antialias, autoGenerateMipmaps) + flags;
+        // a frame that fills its class has no clear border to keep, so it never takes a larger texture
+        const wider = textureWidth > pixelWidth ? this._fitWidth(textureWidth + 1) : textureWidth;
+        const taller = textureHeight > pixelHeight ? this._fitHeight(textureHeight + 1) : textureHeight;
 
-        if (!bucket)
-        {
-            bucket = [];
-            this._buckets.set(key, bucket);
-        }
-
-        let texture = bucket.pop();
+        let texture = this._takeIdle(key(textureWidth, textureHeight))
+            ?? this._takeIdle(key(wider, textureHeight))
+            ?? this._takeIdle(key(textureWidth, taller))
+            ?? this._takeIdle(key(wider, taller));
 
         if (!texture)
         {
+            const created = key(textureWidth, textureHeight);
+
             texture = this.createTexture({
                 width: textureWidth,
                 height: textureHeight,
@@ -272,16 +288,20 @@ export class TexturePoolClass
                 autoGenerateMipmaps,
                 format,
                 scaleMode,
+                renderTarget,
             });
 
+            if (!this._buckets.has(created)) this._buckets.set(created, []);
+            this._poolKey[texture.uid] = created;
             this._poolStyle[texture.uid] = texture.source.style;
         }
 
-        texture.source._resolution = resolution;
-        texture.source.width = textureWidth / resolution;
-        texture.source.height = textureHeight / resolution;
-        texture.source.pixelWidth = textureWidth;
-        texture.source.pixelHeight = textureHeight;
+        // a texture keeps its own backing size; only the request decides the frame and resolution
+        const source = texture.source;
+
+        source._resolution = resolution;
+        source.width = source.pixelWidth / resolution;
+        source.height = source.pixelHeight / resolution;
 
         // fit the layout to the requested original size
         texture.frame.x = 0;
@@ -291,8 +311,6 @@ export class TexturePoolClass
 
         texture.updateUvs();
 
-        this._poolKey[texture.uid] = key;
-
         return texture;
     }
 
@@ -300,29 +318,47 @@ export class TexturePoolClass
      * The backing size, in physical pixels, that {@link TexturePoolClass#getOptimalTexture|getOptimalTexture}
      * would allocate for a request, without taking a texture from the pool.
      *
-     * Each axis is the next power of two, or the smallest registered screen the request fits inside
-     * (see {@link TexturePoolClass#setScreenSize|setScreenSize}). Use it when a consumer needs to know
-     * where a request's content will sit inside its pooled texture before it has one, such as a uniform
-     * that maps content space onto texture space.
+     * Each axis is the request's size class (four an octave, so at most a quarter above the request), or the
+     * smallest registered screen the request fits inside when that is smaller (see
+     * {@link TexturePoolClass#setScreenSize|setScreenSize}). An idle texture one class larger may serve the request.
      * @param frameWidth - The minimum width of the texture.
      * @param frameHeight - The minimum height of the texture.
      * @param resolution - The resolution of the texture.
-     * @returns The width and height the pooled texture would have, in physical pixels.
+     * @returns The width and height a new pooled texture would have, in physical pixels.
      */
     public getOptimalSize(frameWidth: number, frameHeight: number, resolution = 1): Size
     {
-        const pixelWidth = Math.ceil((frameWidth * resolution) - 1e-6);
-        const pixelHeight = Math.ceil((frameHeight * resolution) - 1e-6);
-
-        const po2Width = nextPow2(pixelWidth);
-        const screenWidth = this._screens.getFittingWidth(pixelWidth);
-        const po2Height = nextPow2(pixelHeight);
-        const screenHeight = this._screens.getFittingHeight(pixelHeight);
-
         return {
-            width: screenWidth !== undefined ? Math.min(screenWidth, po2Width) : po2Width,
-            height: screenHeight !== undefined ? Math.min(screenHeight, po2Height) : po2Height,
+            width: this._fitWidth(toPixels(frameWidth, resolution)),
+            height: this._fitHeight(toPixels(frameHeight, resolution)),
         };
+    }
+
+    private _fitWidth(pixelWidth: number): number
+    {
+        return this._fit(pixelWidth, this._screens.getFittingWidth(pixelWidth));
+    }
+
+    private _fitHeight(pixelHeight: number): number
+    {
+        return this._fit(pixelHeight, this._screens.getFittingHeight(pixelHeight));
+    }
+
+    private _fit(pixels: number, screen: number | undefined): number
+    {
+        // as before, only a power of two frame meets its texture's edge; any other keeps a clear texel past it
+        const fitted = sizeClass(isPow2(pixels) ? pixels : pixels + 1);
+
+        return screen !== undefined ? Math.min(screen, fitted) : fitted;
+    }
+
+    private _takeIdle(key: number): Texture | undefined
+    {
+        const texture = this._buckets.get(key)?.pop();
+
+        if (texture) delete this._idleSince[texture.uid];
+
+        return texture;
     }
 
     /**
@@ -333,7 +369,7 @@ export class TexturePoolClass
      * a temporary texture the same size as its input (e.g., for multi-pass blur).
      * @param texture - The texture whose dimensions to match.
      * @param antialias - Whether to use antialias on the pooled texture. Defaults to `false`.
-     * @returns A pooled texture with power-of-two or screen sized backing dimensions at the source resolution.
+     * @returns A pooled texture with size-class or screen sized backing dimensions at the source resolution.
      */
     public getSameSizeTexture(texture: Texture, antialias = false)
     {
@@ -393,16 +429,39 @@ export class TexturePoolClass
             return;
         }
 
+        this._idleSince[uid] = performance.now();
         textures.push(renderTexture);
+    }
+
+    /** Destroys textures idle for `idleTime` ms or longer (every idle one by default); call it between renders. */
+    public trim(idleTime = 0): void
+    {
+        const now = performance.now();
+
+        for (const textures of this._buckets.values())
+        {
+            // returns push in time order, so each bucket's longest idle textures lead it
+            let expired = 0;
+
+            while (expired < textures.length && now - this._idleSince[textures[expired].uid] >= idleTime) expired++;
+
+            if (expired > 0) this._dropTextures(textures.splice(0, expired), true);
+        }
+    }
+
+    /** Every texture waiting idle in the pool, for callers that account for what it holds. */
+    public *idleTextures(): IterableIterator<Texture>
+    {
+        for (const textures of this._buckets.values()) yield* textures;
     }
 
     /**
      * Registers the screen size of a renderer with the pool, in physical pixels.
      *
      * While a screen is registered, a request that fits inside it on an axis is given that screen's size on
-     * that axis instead of the next power of two, which stops a full screen filter from allocating a texture
-     * far larger than the screen. Requests larger than every registered screen on an axis keep the power of
-     * two size - the pool never rounds a request up to a screen it does not fit in.
+     * that axis when that is smaller than the request's size class, which keeps a full screen filter from
+     * allocating a texture larger than the screen. Requests larger than every registered screen on an axis keep
+     * their size class - the pool never rounds a request up to a screen it does not fit in.
      * @param rendererUid - The uid of the renderer, used to update or remove this screen later.
      * @param pixelWidth - The width of the screen in physical pixels.
      * @param pixelHeight - The height of the screen in physical pixels.
@@ -428,8 +487,8 @@ export class TexturePoolClass
     }
 
     /**
-     * Destroys the idle textures in every bucket that has a non power of two dimension matching no live
-     * screen. Power of two buckets are always kept, as any request can fall back to them.
+     * Destroys the idle textures in every bucket that has a dimension that is neither a size class nor that of
+     * a live screen. Size class buckets are always kept, as any request can fall back to them.
      */
     private _pruneScreenTextures(): void
     {
@@ -439,8 +498,8 @@ export class TexturePoolClass
             const width = packed >>> 17;
             const height = (packed >>> 2) & 0x7FFF;
 
-            if ((isPow2(width) || this._screens.hasWidth(width))
-                && (isPow2(height) || this._screens.hasHeight(height))) continue;
+            if ((sizeClass(width) === width || this._screens.hasWidth(width))
+                && (sizeClass(height) === height || this._screens.hasHeight(height))) continue;
 
             this._dropTextures(textures, true);
             this._buckets.delete(key);
@@ -460,6 +519,7 @@ export class TexturePoolClass
 
             delete this._poolKey[texture.uid];
             delete this._poolStyle[texture.uid];
+            delete this._idleSince[texture.uid];
 
             if (destroy) texture.destroy(true);
         }
@@ -480,10 +540,7 @@ export class TexturePoolClass
 
             for (const [key, textures] of this._buckets)
             {
-                // The packed size is signed; bit 31 must be removed before decoding the format.
-                const formatKey = Math.floor((key - (key | 0)) / formatBit);
-
-                if (formatKey !== id) continue;
+                if (Math.floor(Math.floor(key / flagsBit) / 4) !== id) continue;
 
                 this._dropTextures(textures, destroyTextures !== false);
                 this._buckets.delete(key);

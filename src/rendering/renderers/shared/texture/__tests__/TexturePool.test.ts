@@ -71,15 +71,15 @@ describe('TexturePool', () =>
             expect(noMipmapTexture).not.toBe(mipmappedTexture);
         });
 
-        it('should handle small po2 heights with mipmap flag correctly', () =>
+        it('should handle small heights with mipmap flag correctly', () =>
         {
-            // Test pool key generation with small dimensions (1-3 pixels)
+            // Test pool key generation with small dimensions in distinct size classes
             // to ensure proper separation across different configurations
             const texture1 = pool.getOptimalTexture({ width: 64, height: 1 });
             const texture2 = pool.getOptimalTexture({ width: 64, height: 1, autoGenerateMipmaps: true });
-            const texture3 = pool.getOptimalTexture({ width: 64, height: 2 });
-            const texture4 = pool.getOptimalTexture({ width: 64, height: 2, autoGenerateMipmaps: true });
-            const texture5 = pool.getOptimalTexture({ width: 64, height: 3 });
+            const texture3 = pool.getOptimalTexture({ width: 64, height: 40 });
+            const texture4 = pool.getOptimalTexture({ width: 64, height: 40, autoGenerateMipmaps: true });
+            const texture5 = pool.getOptimalTexture({ width: 64, height: 70 });
 
             // All configurations should produce unique textures
             expect(texture1).not.toBe(texture2);
@@ -105,14 +105,14 @@ describe('TexturePool', () =>
             pool.returnTexture(texture4);
 
             const texture2Again = pool.getOptimalTexture({ width: 64, height: 1, autoGenerateMipmaps: true });
-            const texture4Again = pool.getOptimalTexture({ width: 64, height: 2, autoGenerateMipmaps: true });
+            const texture4Again = pool.getOptimalTexture({ width: 64, height: 40, autoGenerateMipmaps: true });
 
             expect(texture2Again).toBe(texture2);
             expect(texture4Again).toBe(texture4);
 
             // Verify textures with different mipmap settings are not confused
             pool.returnTexture(texture4);
-            const texture5Again = pool.getOptimalTexture({ width: 64, height: 3 });
+            const texture5Again = pool.getOptimalTexture({ width: 64, height: 70 });
 
             expect(texture5Again).not.toBe(texture4);
             expect(texture5Again.source.autoGenerateMipmaps).toBe(false);
@@ -429,34 +429,35 @@ describe('TexturePool', () =>
     {
         it('should not cap anything while no screen is registered', () =>
         {
-            const texture = pool.getOptimalTexture({ width: 1280, height: 300 });
+            const texture = pool.getOptimalTexture({ width: 1300, height: 300 });
 
-            expect(texture.source.pixelWidth).toBe(2048);
-            expect(texture.source.pixelHeight).toBe(512);
+            expect(texture.source.pixelWidth).toBe(1536);
+            expect(texture.source.pixelHeight).toBe(320);
         });
 
         it('should cap each axis to the screen when the request fits', () =>
         {
             pool.setScreenSize(1, 1280, 720);
 
-            const texture = pool.getOptimalTexture({ width: 1280, height: 300 });
+            // 700 rounds up to the 768 class, which the 720 screen caps
+            const texture = pool.getOptimalTexture({ width: 1200, height: 700 });
 
             expect(texture.source.pixelWidth).toBe(1280);
-            expect(texture.source.pixelHeight).toBe(512);
-            expect(texture.frame.width).toBe(1280);
-            expect(texture.frame.height).toBe(300);
+            expect(texture.source.pixelHeight).toBe(720);
+            expect(texture.frame.width).toBe(1200);
+            expect(texture.frame.height).toBe(700);
         });
 
         it('should report the size a request would get without taking a texture', () =>
         {
             pool.setScreenSize(1, 1280, 720);
 
-            const size = pool.getOptimalSize(1280, 300);
+            const size = pool.getOptimalSize(1200, 700);
 
-            expect(size).toEqual({ width: 1280, height: 512 });
-            expect(pool.getOptimalSize(640, 150, 2)).toEqual({ width: 1280, height: 512 });
+            expect(size).toEqual({ width: 1280, height: 720 });
+            expect(pool.getOptimalSize(600, 350, 2)).toEqual({ width: 1280, height: 720 });
 
-            const texture = pool.getOptimalTexture({ width: 1280, height: 300 });
+            const texture = pool.getOptimalTexture({ width: 1200, height: 700 });
 
             expect(texture.source.pixelWidth).toBe(size.width);
             expect(texture.source.pixelHeight).toBe(size.height);
@@ -468,8 +469,8 @@ describe('TexturePool', () =>
 
             const texture = pool.getOptimalTexture({ width: 1300, height: 300 });
 
-            expect(texture.source.pixelWidth).toBe(2048);
-            expect(texture.source.pixelHeight).toBe(512);
+            expect(texture.source.pixelWidth).toBe(1536);
+            expect(texture.source.pixelHeight).toBe(320);
         });
 
         it('should use physical pixels when the resolution is not 1', () =>
@@ -484,20 +485,22 @@ describe('TexturePool', () =>
             expect(texture.source.height).toBe(360);
         });
 
-        it('should keep capped and power-of-two requests in separate buckets', () =>
+        it('should keep capped and size class requests in separate buckets', () =>
         {
             pool.setScreenSize(1, 1280, 720);
 
-            const capped = pool.getOptimalTexture({ width: 1280, height: 300 });
-            const po2 = pool.getOptimalTexture({ width: 1300, height: 300 });
+            const capped = pool.getOptimalTexture({ width: 1280, height: 700 });
+            const sized = pool.getOptimalTexture({ width: 1300, height: 700 });
 
-            expect(capped).not.toBe(po2);
+            expect(capped).not.toBe(sized);
+            expect(capped.source.pixelWidth).toBe(1280);
+            expect(sized.source.pixelWidth).toBe(1536);
 
             pool.returnTexture(capped);
-            pool.returnTexture(po2);
+            pool.returnTexture(sized);
 
-            expect(pool.getOptimalTexture({ width: 1300, height: 300 })).toBe(po2);
-            expect(pool.getOptimalTexture({ width: 1280, height: 300 })).toBe(capped);
+            expect(pool.getOptimalTexture({ width: 1300, height: 700 })).toBe(sized);
+            expect(pool.getOptimalTexture({ width: 1280, height: 700 })).toBe(capped);
         });
 
         it('should pick the smallest screen the request fits in when several are registered', () =>
@@ -511,8 +514,8 @@ describe('TexturePool', () =>
 
             expect([large.source.pixelWidth, large.source.pixelHeight]).toEqual([1280, 720]);
             expect([small.source.pixelWidth, small.source.pixelHeight]).toEqual([800, 600]);
-            // 700 fits in the 800 wide screen, 500 fits in both screens but 512 is smaller than either
-            expect([fits.source.pixelWidth, fits.source.pixelHeight]).toEqual([800, 512]);
+            // 700 and 500 fit both screens, but their classes 768 and 512 are smaller than either
+            expect([fits.source.pixelWidth, fits.source.pixelHeight]).toEqual([768, 512]);
         });
 
         it('should not prune when a screen is re-registered with the same size', () =>
@@ -542,7 +545,7 @@ describe('TexturePool', () =>
 
             expect(screenTexture.destroyed).toBe(true);
             expect(po2Texture.destroyed).toBe(false);
-            // the power-of-two ladder is never pruned
+            // the size class ladder is never pruned
             expect(pool.getOptimalTexture({ width: 256, height: 256 })).toBe(po2Texture);
         });
 
@@ -594,7 +597,9 @@ describe('TexturePool', () =>
         {
             pool.setScreenSize(1, 100, 100);
 
-            const texture = pool.getOptimalTexture({ width: 90, height: 90 });
+            const texture = pool.getOptimalTexture({ width: 99, height: 99 });
+
+            expect(texture.source.pixelWidth).toBe(100);
 
             pool.returnTexture(texture);
             pool.removeScreen(1);
@@ -782,9 +787,9 @@ describe('TexturePool', () =>
         });
     });
 
-    describe('Power-of-2 Rounding', () =>
+    describe('Size Class Rounding', () =>
     {
-        it('should round dimensions to power-of-2 and separate by mipmap flag', () =>
+        it('should round dimensions to their size class and separate by mipmap flag', () =>
         {
             // Request 100x100, will be rounded to 128x128
             const texture1 = pool.getOptimalTexture({ width: 100, height: 100 });
@@ -799,6 +804,160 @@ describe('TexturePool', () =>
             expect(texture1).not.toBe(texture2);
             expect(texture1.source.autoGenerateMipmaps).toBe(false);
             expect(texture2.source.autoGenerateMipmaps).toBe(true);
+        });
+
+        it('should keep every class within a quarter of the request above 256 pixels', () =>
+        {
+            const sizes = [1, 33, 100, 129, 300, 700, 1025, 2100, 3000];
+            const classes = sizes.map((size) => pool.getOptimalSize(size, size).width);
+
+            expect(classes).toEqual([32, 64, 128, 160, 320, 768, 1280, 2560, 3072]);
+
+            for (let size = 257; size < 4096; size += 37)
+            {
+                const width = pool.getOptimalSize(size, 1).width;
+
+                expect(width).toBeGreaterThanOrEqual(size);
+                expect(width).toBeLessThanOrEqual(size * 1.25);
+            }
+        });
+
+        it('should place the frame and keep the backing in physical pixels at any resolution', () =>
+        {
+            const texture = pool.getOptimalTexture({ width: 150.5, height: 40, resolution: 2 });
+
+            expect([texture.source.pixelWidth, texture.source.pixelHeight]).toEqual([320, 96]);
+            expect([texture.source.width, texture.source.height]).toEqual([160, 48]);
+            expect([texture.frame.width, texture.frame.height]).toEqual([150.5, 40]);
+        });
+    });
+
+    describe('Render use', () =>
+    {
+        it('should make render targets unless a request says it only uploads', () =>
+        {
+            const target = pool.getOptimalTexture({ width: 64, height: 64 });
+            const upload = pool.getOptimalTexture({ width: 64, height: 64, renderTarget: false });
+
+            expect(target.source.renderTarget).toBe(true);
+            expect(upload.source.renderTarget).toBe(false);
+        });
+
+        it('should never hand an upload-only texture to a render target request', () =>
+        {
+            const upload = pool.getOptimalTexture({ width: 64, height: 64, renderTarget: false });
+
+            pool.returnTexture(upload);
+
+            const target = pool.getOptimalTexture({ width: 64, height: 64 });
+
+            expect(target).not.toBe(upload);
+            expect(pool.getOptimalTexture({ width: 64, height: 64, renderTarget: false })).toBe(upload);
+        });
+    });
+
+    describe('Neighbouring classes', () =>
+    {
+        it('should lend an idle texture one class larger before making a new one', () =>
+        {
+            const texture = pool.getOptimalTexture({ width: 300, height: 300 });
+
+            pool.returnTexture(texture);
+
+            const smaller = pool.getOptimalTexture({ width: 250, height: 250 });
+
+            expect(smaller).toBe(texture);
+            expect([smaller.source.pixelWidth, smaller.frame.width]).toEqual([320, 250]);
+
+            // it goes back to its own bucket, so a request of its own class finds it again
+            pool.returnTexture(smaller);
+
+            expect(pool.getOptimalTexture({ width: 300, height: 300 })).toBe(texture);
+        });
+
+        it('should not lend a texture two classes larger', () =>
+        {
+            const texture = pool.getOptimalTexture({ width: 400, height: 400 });
+
+            pool.returnTexture(texture);
+
+            const smaller = pool.getOptimalTexture({ width: 250, height: 250 });
+
+            expect(smaller).not.toBe(texture);
+            expect(smaller.source.pixelWidth).toBe(256);
+        });
+    });
+
+    describe('Trimming', () =>
+    {
+        let now: jest.SpyInstance;
+
+        beforeEach(() =>
+        {
+            now = jest.spyOn(performance, 'now');
+        });
+
+        afterEach(() =>
+        {
+            now.mockRestore();
+        });
+
+        it('should destroy only the textures idle for at least the given time', () =>
+        {
+            const old = pool.getOptimalTexture({ width: 64, height: 64 });
+            const recent = pool.getOptimalTexture({ width: 64, height: 64 });
+            const busy = pool.getOptimalTexture({ width: 64, height: 64 });
+
+            now.mockReturnValue(1000);
+            pool.returnTexture(old);
+            now.mockReturnValue(2000);
+            pool.returnTexture(recent);
+            now.mockReturnValue(2500);
+            pool.trim(1000);
+
+            expect(old.destroyed).toBe(true);
+            expect(recent.destroyed).toBe(false);
+            expect(busy.destroyed).toBe(false);
+            expect([...pool.idleTextures()]).toEqual([recent]);
+
+            pool.trim();
+
+            expect(recent.destroyed).toBe(true);
+            expect([...pool.idleTextures()]).toEqual([]);
+
+            pool.returnTexture(busy);
+
+            expect([...pool.idleTextures()]).toEqual([busy]);
+        });
+
+        it('should restart a texture\'s idle time when it is taken and returned again', () =>
+        {
+            const texture = pool.getOptimalTexture({ width: 64, height: 64 });
+
+            now.mockReturnValue(1000);
+            pool.returnTexture(texture);
+            now.mockReturnValue(2900);
+            pool.returnTexture(pool.getOptimalTexture({ width: 64, height: 64 }));
+            now.mockReturnValue(3000);
+            pool.trim(1000);
+
+            expect(texture.destroyed).toBe(false);
+        });
+
+        it('should forget the textures it trimmed', () =>
+        {
+            const texture = pool.getOptimalTexture({ width: 64, height: 64 });
+
+            pool.returnTexture(texture);
+            pool.trim();
+
+            const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { /* capture */ });
+
+            pool.returnTexture(texture);
+
+            expect(warnSpy.mock.calls.join(' ')).toContain('did not come from this pool');
+
+            warnSpy.mockRestore();
         });
     });
 });

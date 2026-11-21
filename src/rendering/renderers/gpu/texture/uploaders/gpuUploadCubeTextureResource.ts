@@ -13,8 +13,16 @@ export function createGpuUploadCubeTextureResource(
     uploaders: Record<string, GpuTextureUploader> & { image: GpuTextureUploader }
 ): GpuTextureUploader<CubeTextureSource>
 {
+    const faceUploader = (face: CubeTextureSource['faces'][keyof CubeTextureSource['faces']]) =>
+        uploaders[face.uploadMethodId] || uploaders.image;
+
     return {
         type: 'cube',
+        needsRenderAttachment(source: CubeTextureSource)
+        {
+            return FACE_ORDER.some((key) =>
+                !!faceUploader(source.faces[key]).needsRenderAttachment?.(source.faces[key]));
+        },
         upload(source: CubeTextureSource, gpuTexture: GPUTexture, gpu: GPU)
         {
             const faces = source.faces;
@@ -24,9 +32,7 @@ export function createGpuUploadCubeTextureResource(
                 const key = FACE_ORDER[i];
                 const face = faces[key];
 
-                const uploader = uploaders[face.uploadMethodId] || uploaders.image;
-
-                uploader.upload(face as any, gpuTexture, gpu, i);
+                faceUploader(face).upload(face as any, gpuTexture, gpu, i);
             }
         }
     };

@@ -10,6 +10,8 @@ export const gpuUploadImageResource = {
 
     type: 'image',
 
+    needsRenderAttachment: () => true,
+
     upload(source: TextureSource, gpuTexture: GPUTexture, gpu: GPU, originZOverride = 0)
     {
         const resource = source.resource as ImageBitmap | HTMLCanvasElement | OffscreenCanvas | HTMLImageElement;

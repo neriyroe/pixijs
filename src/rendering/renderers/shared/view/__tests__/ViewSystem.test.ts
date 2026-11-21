@@ -83,7 +83,8 @@ describe('ViewSystem', () =>
         const texture = TexturePool.getOptimalTexture({ width: 640, height: 480, resolution: 2 });
         const { canvas } = CanvasPool.getOptimalCanvasAndContext(640, 480, 2);
 
-        expect([texture.source.pixelWidth, texture.source.pixelHeight]).toEqual([2048, 1024]);
+        // with no screen left, each axis takes its size class
+        expect([texture.source.pixelWidth, texture.source.pixelHeight]).toEqual([1536, 1024]);
         expect([canvas.width, canvas.height]).toEqual([2048, 1024]);
 
         TexturePool.returnTexture(texture);

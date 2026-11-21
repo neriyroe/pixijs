@@ -5,6 +5,8 @@ import type { GPU } from '../../GpuDeviceSystem';
 export interface GpuTextureUploader<T extends TextureSource = TextureSource>
 {
     type: string;
+    /** Whether the upload writes its destination as a render attachment, as copyExternalImageToTexture must. */
+    needsRenderAttachment?(source: T): boolean;
     /**
      * Uploads a texture source to the given GPU texture.
      * @param {T} source - The source to upload.

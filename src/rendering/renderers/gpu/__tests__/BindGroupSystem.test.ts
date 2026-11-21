@@ -63,7 +63,7 @@ describeLocalOnly('BindGroupSystem cache sweep', () =>
         }
     });
 
-    it('sweeps the entries a texture unload strands and keeps the ones still in use', async () =>
+    it('drops the entries a texture unload strands at once and keeps the ones still in use', async () =>
     {
         renderer = await getWebGPURenderer();
         const texture = getTexture();
@@ -73,30 +73,40 @@ describeLocalOnly('BindGroupSystem cache sweep', () =>
 
         const before = liveEntries();
 
-        // only the entries the next frame touches get a fresh stamp back
-        backdate(before);
         texture.source.unload();
-        renderer.render(sprite);
 
         const after = liveEntries();
-        const used = after.filter((entry) => entry._gcLastUsed === renderer.gc.now);
-        const stranded = after.filter((entry) => !used.includes(entry));
 
-        expect(stranded.length).toBeGreaterThan(0);
-        expect(after).toHaveLength(before.length + stranded.length);
+        // the groups naming the unloaded texture's old id could never be hit again
+        expect(after.length).toBeLessThan(before.length);
+        expect(before).toEqual(expect.arrayContaining(after));
 
-        renderer.gc.run();
+        renderer.render(sprite);
 
-        const survivors = liveEntries();
+        expect(liveEntries()).toHaveLength(before.length);
+        expect(liveEntries()).toEqual(expect.arrayContaining(after));
+    });
 
-        expect(survivors).toHaveLength(before.length);
-        expect(survivors).toEqual(expect.arrayContaining(used));
+    it('drops the entries of a destroyed texture and stops listening to it', async () =>
+    {
+        renderer = await getWebGPURenderer();
+        const texture = getTexture();
+        const sprite = new Sprite({ texture });
 
-        for (const entry of stranded)
-        {
-            expect(survivors).not.toContain(entry);
-            expect(entry.gpuBindGroup).toBeNull();
-        }
+        renderer.render(sprite);
+
+        const tracked = renderer.bindGroup['_keysByResource'];
+        const source = texture.source;
+        const count = liveEntries().length;
+
+        expect(tracked.has(source)).toBe(true);
+
+        sprite.texture = getTexture();
+        texture.destroy(true);
+
+        expect(tracked.has(source)).toBe(false);
+        expect(liveEntries().length).toBeLessThan(count);
+        expect(() => renderer.render(sprite)).not.toThrow();
     });
 
     it('renders again after a sweep, rebuilding only what the frame needs', async () =>

@@ -84,10 +84,14 @@ export abstract class AbstractTextSystem implements System
             resolution,
         });
 
+        // reapply the padding to the frame
+        if (style.trim) frame.pad(style.padding);
+
+        // the texture holds the canvas from its top left corner to the frame's far edges
         const texture = getPo2TextureFromSource(
             canvasAndContext.canvas,
-            frame.width,
-            frame.height,
+            Math.ceil(frame.x + frame.width),
+            Math.ceil(frame.y + frame.height),
             resolution,
             autoGenerateMipmaps,
             textureStyle?.scaleMode
@@ -95,8 +99,6 @@ export abstract class AbstractTextSystem implements System
 
         if (style.trim)
         {
-            // reapply the padding to the frame
-            frame.pad(style.padding);
             texture.frame.copyFrom(frame);
 
             // We initially increased the frame size by a resolution factor to achieve a crisper display.

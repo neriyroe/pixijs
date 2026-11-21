@@ -38,7 +38,7 @@ export class RenderTexture extends Texture
 
         return new RenderTexture({
             ...textureOptions,
-            source: new TextureSource(rest),
+            source: new TextureSource({ renderTarget: true, ...rest }),
             dynamic: dynamic ?? false,
         });
     }

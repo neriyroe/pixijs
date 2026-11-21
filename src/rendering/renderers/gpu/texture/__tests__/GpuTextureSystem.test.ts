@@ -1,5 +1,10 @@
+import { RenderTarget } from '../../../shared/renderTarget/RenderTarget';
+import { RenderTexture } from '../../../shared/texture/RenderTexture';
+import { BufferImageSource } from '../../../shared/texture/sources/BufferImageSource';
+import { CanvasSource } from '../../../shared/texture/sources/CanvasSource';
 import { TextureSource } from '../../../shared/texture/sources/TextureSource';
 import { Texture } from '../../../shared/texture/Texture';
+import { GpuTextureSystem } from '../GpuTextureSystem';
 import { describeLocalOnly, getWebGPURenderer } from '@test-utils';
 
 import type { WebGPURenderer } from '../../WebGPURenderer';
@@ -203,5 +208,102 @@ describeLocalOnly('GpuTextureSystem 3D textures', () =>
             expect(storage.dimension).toBe('3d');
             expect(plain.usage & GPUTextureUsage.STORAGE_BINDING).toBe(0);
         });
+    });
+});
+
+describeLocalOnly('GpuTextureSystem render use', () =>
+{
+    const renders = (texture: GPUTexture) => !!(texture.usage & GPUTextureUsage.RENDER_ATTACHMENT);
+
+    it('should make only render targets and render-pass uploads render attachments', async () =>
+    {
+        renderer = (await getWebGPURenderer()) as WebGPURenderer;
+
+        const canvas = document.createElement('canvas');
+
+        canvas.width = canvas.height = 4;
+        canvas.getContext('2d');
+
+        const plain = renderer.texture.initSource(new TextureSource({ width: 4, height: 4 }));
+        const rows = renderer.texture.initSource(new BufferImageSource({
+            resource: new Uint8Array(64), width: 4, height: 4, format: 'rgba8unorm',
+        }));
+        const image = renderer.texture.initSource(new CanvasSource({ resource: canvas }));
+        const target = renderer.texture.initSource(new TextureSource({ width: 4, height: 4, renderTarget: true }));
+        const rendered = renderer.texture.initSource(RenderTexture.create({ width: 4, height: 4 }).source);
+
+        expect([plain, rows].map(renders)).toEqual([false, false]);
+        expect([image, target, rendered].map(renders)).toEqual([true, true, true]);
+        // a copy out of any texture costs nothing to allow, so extract keeps working on uploads
+        expect(rows.usage & GPUTextureUsage.COPY_SRC).toBeTruthy();
+    });
+
+    it('should mark a texture a render target once it is attached to one', async () =>
+    {
+        renderer = (await getWebGPURenderer()) as WebGPURenderer;
+
+        const source = new TextureSource({ width: 4, height: 4 });
+        const target = new RenderTarget({ colorTextures: [source], depthStencilTexture: true });
+
+        expect(source.renderTarget).toBe(true);
+        expect(target.depthStencilTexture.renderTarget).toBe(true);
+        expect(renderer.texture.initSource(source).usage & GPUTextureUsage.RENDER_ATTACHMENT).toBeTruthy();
+    });
+
+    it('should take an uploader\'s own word on whether its upload draws', async () =>
+    {
+        const image = GpuTextureSystem.uploadExtensions.image;
+
+        GpuTextureSystem.uploadExtensions.image = { type: 'image', upload: () => undefined, needsRenderAttachment: () => false };
+
+        try
+        {
+            renderer = (await getWebGPURenderer()) as WebGPURenderer;
+
+            const canvas = document.createElement('canvas');
+
+            canvas.width = canvas.height = 4;
+            canvas.getContext('2d');
+
+            expect(renders(renderer.texture.initSource(new CanvasSource({ resource: canvas })))).toBe(false);
+        }
+        finally
+        {
+            if (image) GpuTextureSystem.uploadExtensions.image = image;
+            else delete GpuTextureSystem.uploadExtensions.image;
+        }
+    });
+});
+
+describeLocalOnly('GpuTextureSystem memory count', () =>
+{
+    it('should count the bytes of what it creates and drop them when they go', async () =>
+    {
+        renderer = (await getWebGPURenderer()) as WebGPURenderer;
+
+        const before = renderer.texture.gpuBytes;
+        const small = new TextureSource({ width: 4, height: 4, format: 'rgba8unorm' });
+        const wide = new TextureSource({ width: 4, height: 4, format: 'rgba16float', mipLevelCount: 3 });
+        const block = new TextureSource({ width: 8, height: 8, format: 'depth24plus-stencil8', renderTarget: true });
+
+        renderer.texture.initSource(small);
+        renderer.texture.initSource(wide);
+        renderer.texture.initSource(block);
+
+        expect(renderer.texture.getGpuBytes(small)).toBe(64);
+        expect(renderer.texture.getGpuBytes(wide)).toBe((16 + 4 + 1) * 8);
+        expect(renderer.texture.getGpuBytes(block)).toBe(256);
+        expect(renderer.texture.gpuBytes - before).toBe(64 + 168 + 256);
+
+        small.resize(8, 8);
+
+        expect(renderer.texture.gpuBytes - before).toBe(256 + 168 + 256);
+
+        small.destroy();
+        wide.unload();
+        block.destroy();
+
+        expect(renderer.texture.gpuBytes).toBe(before);
+        expect(renderer.texture.getGpuBytes(wide)).toBe(0);
     });
 });

@@ -32,7 +32,7 @@ export interface BindResource
      * this could be a texture or buffer that has been resized.
      * This is important as it allows the renderer to know that it needs to rebind the resource
      */
-    on?(event: 'change', listenerFunction: (resource: BindResource) => void, listener: BindGroup): void
+    on?(event: 'change', listenerFunction: (resource: BindResource) => void, listener: BindGroup | object): void
     /** todo */
-    off?(event: 'change', listenerFunction: (resource: BindResource) => void, listener: BindGroup): void
+    off?(event: 'change', listenerFunction: (resource: BindResource) => void, listener: BindGroup | object): void
 }

@@ -9,6 +9,8 @@ export const gpuUploadVideoResource = {
 
     type: 'video',
 
+    needsRenderAttachment: (source: VideoSource) => !!gpuUploadImageResource.needsRenderAttachment?.(source),
+
     upload(source: VideoSource, gpuTexture: GPUTexture, gpu: GPU, originZOverride?: number)
     {
         gpuUploadImageResource.upload(source, gpuTexture, gpu, originZOverride);

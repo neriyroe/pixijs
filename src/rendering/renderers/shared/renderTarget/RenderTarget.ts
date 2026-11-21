@@ -207,6 +207,14 @@ export class RenderTarget extends EventEmitter<{
         this.colorAttachments = descriptor.colorAttachments;
         this.depthStencilAttachment = descriptor.depthStencilAttachment;
 
+        // an attached texture is rendered into, so its GPU texture must be created as a render attachment
+        for (const attachment of this.colorAttachments)
+        {
+            attachment.texture.renderTarget = true;
+        }
+
+        if (this.depthStencilAttachment) this.depthStencilAttachment.texture.renderTarget = true;
+
         // an attachment implies the capabilities its format actually has — a depth-only
         // format (e.g. 'depth24plus') must not report stencil support
         if (this.depthStencilAttachment)
@@ -479,6 +487,7 @@ export class RenderTarget extends EventEmitter<{
                 autoGenerateMipmaps: false,
                 antialias: false,
                 mipLevelCount: 1,
+                renderTarget: true,
                 // sampleCount: handled by the render target system..
             }),
         };

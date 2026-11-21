@@ -27,11 +27,13 @@ class GpuBindGroupEntry implements GCable
     public readonly autoGarbageCollect = true;
     /** Part of the {@link GCable} contract; a cached bind group owns no per-renderer GPU data. */
     public readonly _gpuData: GCable['_gpuData'] = null;
+    public readonly resources: BindResource[];
 
-    constructor(gpuBindGroup: GPUBindGroup, now: number)
+    constructor(gpuBindGroup: GPUBindGroup, now: number, resources: BindResource[])
     {
         this.gpuBindGroup = gpuBindGroup;
         this._gcLastUsed = now;
+        this.resources = resources;
     }
 
     /**
@@ -63,6 +65,7 @@ export class BindGroupSystem implements System
     private readonly _renderer: WebGPURenderer;
 
     private _hash: Record<string, GpuBindGroupEntry> = Object.create(null);
+    private readonly _keysByResource = new Map<BindResource, Set<string>>();
     private _gpu: GPU;
 
     constructor(renderer: WebGPURenderer)
@@ -80,6 +83,7 @@ export class BindGroupSystem implements System
     {
         this._gpu = gpu;
         this._hash = Object.create(null);
+        this._untrackAll();
     }
 
     public getBindGroup(bindGroup: BindGroup, program: GpuProgram, groupIndex: number): GPUBindGroup
@@ -108,6 +112,7 @@ export class BindGroupSystem implements System
         const device = this._gpu.device;
         const groupLayout = program.layout[groupIndex];
         const entries: GPUBindGroupEntry[] = [];
+        const tracked: BindResource[] = [];
         const renderer = this._renderer;
 
         for (const j in groupLayout)
@@ -183,6 +188,9 @@ export class BindGroupSystem implements System
                 binding: groupLayout[j],
                 resource: gpuResource,
             });
+
+            // samplers share ids by content, so another style's change says nothing about this group
+            if (resource._resourceType !== 'textureSampler') tracked.push(resource);
         }
 
         const layout = renderer.shader.getProgramData(program).bindGroups[groupIndex];
@@ -192,13 +200,70 @@ export class BindGroupSystem implements System
             entries,
         });
 
-        this._hash[key] = new GpuBindGroupEntry(gpuBindGroup, renderer.gc.now);
+        this._hash[key] = new GpuBindGroupEntry(gpuBindGroup, renderer.gc.now, tracked);
+
+        for (let i = 0; i < tracked.length; i++) this._track(tracked[i], key);
 
         return gpuBindGroup;
     }
 
+    private _track(resource: BindResource, key: string): void
+    {
+        let keys = this._keysByResource.get(resource);
+
+        if (!keys)
+        {
+            keys = new Set();
+            this._keysByResource.set(resource, keys);
+            resource.on?.('change', this._onResourceChange, this);
+        }
+
+        keys.add(key);
+    }
+
+    private _untrack(resource: BindResource): void
+    {
+        this._keysByResource.delete(resource);
+        resource.off?.('change', this._onResourceChange, this);
+    }
+
+    private _untrackAll(): void
+    {
+        for (const resource of this._keysByResource.keys()) resource.off?.('change', this._onResourceChange, this);
+
+        this._keysByResource.clear();
+    }
+
+    /** A resource that re-keys (resized, unloaded or destroyed) strands every group cached under its old id. */
+    private _onResourceChange(resource: BindResource): void
+    {
+        const keys = this._keysByResource.get(resource);
+
+        if (!keys) return;
+
+        this._untrack(resource);
+
+        for (const key of keys)
+        {
+            const entry = this._hash[key];
+
+            delete this._hash[key];
+
+            if (!entry) continue;
+
+            for (let i = 0; i < entry.resources.length; i++)
+            {
+                const other = entry.resources[i];
+                const otherKeys = other !== resource ? this._keysByResource.get(other) : undefined;
+
+                if (otherKeys?.delete(key) && otherKeys.size === 0) this._untrack(other);
+            }
+        }
+    }
+
     public destroy(): void
     {
+        this._untrackAll();
         this._hash = null;
         (this._renderer as null) = null;
     }
